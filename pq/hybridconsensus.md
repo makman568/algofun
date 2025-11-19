@@ -1,11 +1,14 @@
-# Algorand Post-Quantum Consensus Authentication  
-## Sticky Envelope Architecture - Unified Whitepaper v3.2 (November 2025)
+# Algorand Post-Quantum Consensus before PQ-VRF
+## Falcon Envelope Architecture v0.1
 
 # 1. Introduction
-Algorand's BA★ consensus protocol requires that all committee messages be authentically linked
-to the participation key owner. Quantum computers break elliptic-curve VRFs, Ed25519 signatures,
-and EC participation-key identities. However, BA★ does not rely on VRF secrecy for safety—it
-relies on message authenticity. Sticky Envelopes provide a minimal PQ authentication layer by
+This paper proposes a technique that effectively provides for the PQ safety of Algorand 
+consensus before the long-term goal of a Post-Quantum VRF is realized.
+
+Algorand's consensus protocol requires that all committee messages be authentically linked
+to the participation key owner. Quantum computers breaking participation-key identities put that
+authentication at risk. However, Algorand consensus does not rely on VRF secrecy for safety—it
+relies on message authenticity. Falcon Envelopes provide a minimal PQ authentication layer by
 wrapping each BA★ message in a Falcon-1024 signature. Wrappers are verified during gossip and
 cached temporarily for catchup peers. No block-format changes, no ledger growth, and no protocol
 redesign.
@@ -45,7 +48,7 @@ messages are dropped automatically. BA★ safety and liveness remain intact.
 
 A PQ upgrade for Algorand must maintain BA★ safety, preserve liveness, avoid changes to blocks or
 ledger state, reuse existing participation keys, support catchup without storing historic votes,
-and impose minimal overhead. Sticky Envelopes satisfy all constraints with no modifications to
+and impose minimal overhead. Falcon Envelopes satisfy all constraints with no modifications to
 consensus rules.
 
 ## 4.1 Safety Preservation
@@ -55,31 +58,31 @@ valid votes or proposals.
 
 ## 4.2 Liveness Preservation
 Liveness depends on reliable gossip, predictable round transitions, and minimal cryptographic
-overhead. Sticky Envelopes introduce no new waiting conditions, no certificate assembly phases,
+overhead. Falcon Envelopes introduce no new waiting conditions, no certificate assembly phases,
 and no latency-sensitive operations.
 
 ## 4.3 No Ledger or Block-Format Changes
-Algorand's block and header formats must remain small and stable. Sticky Envelopes are entirely
+Algorand's block and header formats must remain small and stable. Falcon Envelopes are entirely
 ephemeral and leave all on-chain structures unchanged.
 
 ## 4.4 Avoid Heavy Cryptographic Machinery
 PQ multisignatures, PQ aggregation, and threshold certificates impose megabyte-scale overheads.
-Sticky Envelopes require none of these, minimizing complexity and risk.
+Falcon Envelopes require none of these, minimizing complexity and risk.
 
 ## 4.5 Reuse Existing Falcon Keys
 Participation keys already include Falcon-1024 keypairs. No new user workflows or registration
 steps are required.
 
 ## 4.6 Preserve Catchup Protocol
-Catchup relies on state proofs and recent block headers—not historic BA★ votes. Sticky Envelopes
+Catchup relies on state proofs and recent block headers—not historic BA★ votes. Falcon Envelopes
 introduce only a temporary envelope cache for recent blocks, with automatic pruning.
 
 ## 4.7 Minimal Performance Overhead
-Sticky Envelopes stay within relay node bandwidth and CPU budgets and maintain fast consensus.
+Falcon Envelopes stay within relay node bandwidth and CPU budgets and maintain fast consensus.
 
-# 5. Sticky Envelope Architecture
+# 5. Falcon Envelope Architecture
 
-Sticky Envelopes wrap every BA★ message in a Falcon-1024 signature, providing PQ authentication
+Falcon Envelopes wrap every BA★ message in a Falcon-1024 signature, providing PQ authentication
 while preserving all protocol semantics.
 
 ## 5.1 Existing Participation-Key Material
@@ -116,7 +119,7 @@ H('ALG-PQ-AUTH-V1' || genesis_hash || round || step || role || vrf_output || pay
 
 This ensures message authenticity, role binding, and payload integrity.
 
-## 5.4 Sticky Envelope Cache Lifecycle
+## 5.4 Falcon Envelope Cache Lifecycle
 
 **Cache Purpose:**
 Support catchup peers requesting recent blocks not yet covered by a State Proof.
@@ -214,9 +217,9 @@ Ed25519.Verify → Falcon.Verify
 ```
 is modified throughout the consensus message authentication layer.
 
-# 7. Why Sticky Envelopes Preserve BA★ Safety
+# 7. Why Falcon Envelopes Preserve BA★ Safety
 
-Sticky Envelopes restore the only property BA★ requires under quantum threat: authenticated
+Falcon Envelopes restore the only property BA★ requires under quantum threat: authenticated
 identity. VRF forgery becomes irrelevant because a forged VRF output without a corresponding
 Falcon-1024 wrapper is ignored. BA★ safety—agreement, consistency, and validity—holds exactly as
 before.
@@ -242,7 +245,7 @@ BA★ safety proofs assume three properties:
 2. VRF sortition is correct (but not necessarily secret)
 3. Byzantine nodes comprise < 1/3 of stake
 
-Sticky Envelopes preserve all three:
+Falcon Envelopes preserve all three:
 1. **Authentication:** Falcon-1024 provides authentic binding (quantum-resistant, stronger than Ed25519)
 2. **Sortition:** VRF selection mechanism unchanged (verification still works per Section 5.6)
 3. **Byzantine threshold:** Stake distribution and threshold rules unchanged
@@ -255,9 +258,9 @@ Ed25519_Auth(msg) → Falcon1024_Auth(msg)
 This is a conservative strengthening (quantum-resistant cryptography), not a weakening.
 The proof structure remains identical; only the authentication primitive has been upgraded.
 
-# 8. Why Sticky Envelopes Preserve BA★ Liveness
+# 8. Why Falcon Envelopes Preserve BA★ Liveness
 
-Sticky Envelopes introduce no new waiting conditions and require no aggregation. Liveness remains
+Falcon Envelopes introduce no new waiting conditions and require no aggregation. Liveness remains
 unchanged because gossip continues normally and nodes verify messages in parallel.
 
 ## 8.1 Gossip Behavior Unchanged
@@ -269,7 +272,7 @@ Falcon-1024 verification is slower than Ed25519 but easily parallelized. Relays 
 hundreds of consensus messages per round without issue.
 
 ## 8.3 No New Timeouts or Waiting Stages
-Threshold certificates require collection, assembly, and verification. Sticky Envelopes avoid
+Threshold certificates require collection, assembly, and verification. Falcon Envelopes avoid
 all certificate machinery, preserving fast round transitions.
 
 ## 8.4 Catchup Behavior
@@ -279,14 +282,14 @@ Uses State Proofs to skip millions of rounds. No envelope dependency.
 
 **Short-range catchup (minor addition):**
 For blocks since last State Proof:
-- Nodes must serve Sticky Envelope cache to catchup peers
+- Nodes must serve Falcon Envelope cache to catchup peers
 - Peers verify Falcon signatures on recent blocks
 - If envelopes unavailable, fall back to waiting for next State Proof
 
 **Data dependencies:**
 Catchup for recent blocks (since last State Proof) now requires:
 1. Block data (unchanged)
-2. Sticky Envelopes (new, temporary dependency served from RAM cache)
+2. Falcon Envelopes (new, temporary dependency served from RAM cache)
 
 **Impact:** Minimal
 - Envelopes served from in-memory cache (fast, ~50-100ms)
@@ -314,7 +317,7 @@ In rare instances of network partition or heavy packet loss, Algorand enters **R
 utilizing larger committees (5,000+ participants) to force consensus and recover from deadlock.
 
 **Transient Load During Recovery:**
-During recovery, the number of Sticky Envelopes may spike significantly (2×-5× baseline volume)
+During recovery, the number of Falcon Envelopes may spike significantly (2×-5× baseline volume)
 as the network attempts to gather a supermajority from a larger committee pool.
 
 **Example Spike Scenario:**
@@ -341,7 +344,7 @@ capacity. They do not threaten network stability or create sustained overload co
 
 # 9. Performance Model
 
-Sticky Envelopes affect only gossip-layer bandwidth and in-memory caching. They impose no
+Falcon Envelopes affect only gossip-layer bandwidth and in-memory caching. They impose no
 ledger growth and no block-format overhead.
 
 ## 9.1 Envelope Size
@@ -398,13 +401,13 @@ Upper bound:
 ```
 
 **Current baseline:** 3-8 GB/day  
-**With Sticky Envelopes:** 7-15 GB/day  
+**With Falcon Envelopes:** 7-15 GB/day  
 **Increase factor:** ~1.7-2×
 
 ## 9.5 Validator Bandwidth
 Non-relay participation nodes: **1-2 GB/day** (minimal increase).
 
-## 9.6 Storage (Sticky Envelope Cache)
+## 9.6 Storage (Falcon Envelope Cache)
 - **Retention window:** 256-400 rounds
 - **Envelopes per round:** 80-120
 - **Size per envelope:** 1.3-1.8 KB
@@ -433,7 +436,7 @@ Non-relay participation nodes: **1-2 GB/day** (minimal increase).
 
 **Byzantine Flood Resilience:**
 Message flooding is not a new attack—it exists in current Algorand.
-Sticky Envelopes increase per-message verification cost (~3×) but do not
+Falcon Envelopes increase per-message verification cost (~3×) but do not
 create new vulnerabilities.
 
 Existing defenses remain effective:
@@ -448,7 +451,7 @@ Byzantine resistance mechanisms handle the modest increase in verification cost.
 
 # 10. Comparison With Alternative PQ Approaches
 
-Sticky Envelopes outperform alternative post-quantum designs in simplicity, efficiency, and
+Falcon Envelopes outperform alternative post-quantum designs in simplicity, efficiency, and
 compatibility with Algorand's architecture.
 
 ## 10.1 PQ-VRF Replacement
@@ -460,7 +463,7 @@ compatibility with Algorand's architecture.
 - Replacing VRF adds massive complexity without improving safety
 - No production-ready PQ-VRF exists (research-stage only)
 
-**Sticky Envelopes advantage:** VRF remains classical; only authentication is upgraded.
+**Falcon Envelopes advantage:** VRF remains classical; only authentication is upgraded.
 
 ## 10.2 Threshold or Aggregated Certificates
 **Approach:** Construct PQ threshold signatures or aggregate certificates for block finalization.
@@ -472,7 +475,7 @@ compatibility with Algorand's architecture.
 - Add verification latency for threshold reconstruction
 - Break Algorand's lightweight block design philosophy
 
-**Sticky Envelopes advantage:** No certificates, no aggregation, no on-chain storage.
+**Falcon Envelopes advantage:** No certificates, no aggregation, no on-chain storage.
 
 ## 10.3 Historic Vote Storage
 **Approach:** Store individual votes or vote digests on-chain for verifiability.
@@ -483,9 +486,9 @@ compatibility with Algorand's architecture.
 - Complicates catchup (must download and verify all historic votes)
 - Increases sync time from minutes to hours/days
 
-**Sticky Envelopes advantage:** Votes remain ephemeral; only temporary cache for recent rounds.
+**Falcon Envelopes advantage:** Votes remain ephemeral; only temporary cache for recent rounds.
 
-## 10.4 Sticky Envelopes (Recommended)
+## 10.4 Falcon Envelopes (Recommended)
 **Advantages:**
 - No new cryptographic primitives (reuses existing Falcon-1024)
 - No changes to block structure or ledger format
@@ -499,14 +502,14 @@ compatibility with Algorand's architecture.
 
 # 11. Conclusion
 
-Sticky Envelopes restore post-quantum security to Algorand's consensus by securing the only
+Falcon Envelopes restore post-quantum security to Algorand's consensus by securing the only
 property BA★ truly needs: authenticated committee messages. VRF verification remains functional
 (committee selection cannot be forged), but VRF secrecy is lost (selection becomes predictable).
 Consensus logic, block structure, and ledger format remain unchanged. Falcon-1024 wrappers
 introduce modest bandwidth overhead (1.7-2× increase) and minimal storage overhead (30-80 MB RAM
 cache) but avoid megabyte-scale certificate growth and on-chain bloat.
 
-Sticky Envelopes represent the simplest, safest, and most architecturally compatible PQ upgrade
+Falcon Envelopes represent the simplest, safest, and most architecturally compatible PQ upgrade
 path for Algorand. By reusing existing Falcon-1024 keys from the state proof system and
 maintaining all BA★ protocol invariants, this approach minimizes implementation risk while
 providing complete post-quantum authentication security.
@@ -515,7 +518,7 @@ providing complete post-quantum authentication security.
 
 # 12. Limitations and Scope
 
-Sticky Envelopes are designed to solve a specific cryptographic failure: the **forgery of
+Falcon Envelopes are designed to solve a specific cryptographic failure: the **forgery of
 consensus messages** by a quantum adversary. They do not address all theoretical impacts of a
 CRQC (Cryptographically Relevant Quantum Computer).
 
@@ -540,7 +543,7 @@ enables **targeted DoS attacks** against specific committee members.
 ```
 
 **Scope of Mitigation:**
-Sticky Envelopes do **not** restore VRF secrecy. They ensure that an attacker cannot
+Falcon Envelopes do **not** restore VRF secrecy. They ensure that an attacker cannot
 **impersonate** a node (authentication), but they cannot prevent an attacker from **silencing**
 a node (availability).
 
@@ -566,13 +569,13 @@ layer or via future cryptographic upgrades:
 - Commit-and-reveal schemes for delayed selection disclosure
 
 **Conclusion:**
-Sticky Envelopes are the **authentication layer solution**, not the **anonymity layer solution**.
+Falcon Envelopes are the **authentication layer solution**, not the **anonymity layer solution**.
 Committee secrecy and DoS resistance require separate mitigation strategies beyond the scope of
 this proposal.
 
 ## 12.2 Account-Layer Quantum Resistance
 
-Sticky Envelopes secure **consensus message authentication** but do not address **account key
+Falcon Envelopes secure **consensus message authentication** but do not address **account key
 security**.
 
 **Out of Scope:**
@@ -587,7 +590,7 @@ in separate proposals and is independent of consensus authentication.
 
 ## 12.3 State Proof Dependency
 
-Sticky Envelopes rely on State Proofs for long-range catchup. State Proofs are already
+Falcon Envelopes rely on State Proofs for long-range catchup. State Proofs are already
 Falcon-secured, but any failure in State Proof generation would affect catchup capability for
 nodes more than 256 rounds behind.
 
@@ -633,10 +636,10 @@ Rounds/day: 86,400 seconds ÷ 2.85 seconds = **30,316 rounds/day**
 ```
 
 **Current baseline:** 3-8 GB/day  
-**With Sticky Envelopes:** 6.16-14.55 GB/day (baseline + PQ overhead)  
+**With Falcon Envelopes:** 6.16-14.55 GB/day (baseline + PQ overhead)  
 **Total relay bandwidth:** ~7-15 GB/day
 
-## A.5 Sticky Envelope Cache Size
+## A.5 Falcon Envelope Cache Size
 
 **Typical scenario:**
 ```
@@ -675,7 +678,7 @@ CPU utilization: 25 ms ÷ 2,850 ms ≈ 0.9%
 
 # Appendix B — Security Properties Summary
 
-| Property | Current (Ed25519) | Under CRQC Attack | With Sticky Envelopes |
+| Property | Current (Ed25519) | Under CRQC Attack | With Falcon Envelopes |
 |----------|-------------------|-------------------|----------------------|
 | Message Authentication | Secure | Broken | **Restored (Falcon-1024)** |
 | VRF Sortition Verification | Secure | **Still Functional** | **Still Functional** |
@@ -692,7 +695,7 @@ CPU utilization: 25 ms ÷ 2,850 ms ≈ 0.9%
 | Bandwidth Overhead | Baseline | Baseline | **+3-6 GB/day** |
 | DoS Resistance | High (secret selection) | Degraded (predictable) | Degraded (out of scope) |
 
-**Summary:** Sticky Envelopes restore all critical authentication and safety properties under
+**Summary:** Falcon Envelopes restore all critical authentication and safety properties under
 quantum attack while imposing minimal resource overhead and zero changes to ledger structure.
 VRF verification remains functional (selection cannot be forged), but VRF secrecy is lost
 (selection becomes predictable, enabling targeted DoS). Network-layer defenses or future PQ-VRF
