@@ -11,7 +11,10 @@ authentication at risk. However, Algorand consensus does not rely on VRF secrecy
 relies on message authenticity. Falcon Envelopes provide a minimal PQ authentication layer by
 wrapping each BA★ message in a Falcon-1024 signature. Wrappers are verified during gossip and
 cached temporarily for catchup peers. No block-format changes, no ledger growth, and no protocol
-redesign.
+redesign. 
+
+NOTE: This proposal addresses only post-quantum consensus authentication.
+Algorand already supports post-quantum account-level authentication today via falcon_verify LogicSigs, so account-layer PQ migration is out of scope and does not require changes to consensus.
 
 # 2. Background
 Algorand's security comes from three components: VRF-based eligibility, Ed25519 authentication,
