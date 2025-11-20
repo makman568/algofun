@@ -480,38 +480,171 @@ providing complete post-quantum authentication security.
 
 # 12. Limitations and Scope
 
-## 12.1 Loss of VRF Secrecy (DoS Risk)
+## 12.1 Loss of VRF Secrecy leading to Denial-of-Service Risk
+We examine this section in detail because this is the primary cryptographic weakness in the Falcon Signatures
+scheme. 
 
-12.1A — Block Proposers (Proposal Step)
+The TLDR: Even though VRF secrecy is vulnerable with a CRQC, the main risk - denial-of-service attack - is 
+not practically exploitable and in fact remains about the same as exists today in the classic network.
 
-A CRQC able to recover EC-VRF keys could predict the next set of proposers (~20 accounts). 
-In theory, this enables targeted DoS. In practice, the attack remains non-catastrophic:
+### The Fundamental Threat (Classical and Quantum)
 
-* To stop block production, an attacker must DoS every proposer; a single unsuppressed proposer 
-produces the block. 
-* Proposers are dominated by large operators already hosted behind 
-professional DDoS protection. 
-* There is no direct mapping from account → IP; locating nodes requires difficult network-layer inference.
-* PQ VRF compromise changes timing of selection, not identity of targets; the same few large 
-operators are proposers today.
+In any proof-of-stake system, suppressing consensus requires suppressing a sufficient fraction of total stake. For Algorand:
+- **Liveness threshold**: >1/3 of stake must be silenced to prevent block production
+- **Safety threshold**: >2/3 of stake must be suppressed to enable safety violations
 
-Conclusion: PQ VRF secrecy loss does not make proposer DoS materially more feasible. This remains a bounded liveness issue, not a safety threat.
+Algorand's stake distribution is such that 30-40 large operators (exchanges, custodians, institutional validators) control 60-70% of total stake. These entities are:
+These entities are largely hosted in professional cloud providers and data centers. Because both block production and
+committee participation are influenced by stake weight, any attempt to do a DoS attack will focus primarily on this
+group.
 
-12.1B — Committee Members (Voting Steps)
+**Why DoS on Algorand is Difficult: Decoupling Identity and Location (Anonymity)**
 
-BA★ committees are stake-proportional. The vast majority of committee weight—what matters for safety—is contributed by the same 30–40 large operators. PQ VRF compromise provides no meaningful advantage:
+The crucial factor that renders the theoretical DDoS threat impractical is the decoupling of the on-chain 
+stake identity (the account and its participation key) from its off-chain network address (the validator's 
+IP address).
 
-* To violate safety, an attacker must suppress >2/3 of total stake weight, not individual accounts.  
-* The decisive targets (large operators) are already publicly known today; PQ-VRF compromise does not reveal new ones.
-* These operators run in redundant data-center environments with modern DDoS protection.
-* VRF secrecy loss provides only timing precision, not new vulnerabilities.
-* The mapping of account to IP address is still extremeley difficult 
+- Participation Key Anonymity: Algorand uses separate, specialized participation keys for consensus voting, which are distinct from the account's spending keys. The nodes connect anonymously to the relay network.
+- No Public Directory: The Algorand network architecture is designed so that there is no public gossip list, validator IP directory, or permanent identity-to-IP mapping.
+- Encrypted Connections: Participation nodes communicate over encrypted connections via the relay mesh. Relay nodes, which handle the gossip traffic, do not possess knowledge of the participation keys represented by their clients.
+- Mapping Accounts to IPs Requires Sophisticated Multi-Step Attacks: To correlate participation keys with IP addresses, an attacker would need to execute difficult, resource-intensive operations:
 
-Conclusion: Committee DoS feasibility is unchanged with PQ VRF compromise; it remains operationally implausible and poses no threat to BA★ safety.
+In Relay Architecture, an Attacker would need to:
 
-**Scope of Mitigation:**
-Falcon Envelopes restore authentication, not secrecy. They prevent an attacker from impersonating committee members, but they cannot prevent a well-resourced adversary from attempting to silence nodes through network-layer attacks. This risk exists today via DoS attack of the largest accounts ; it is not an issue magnified by PQ VRF compromise.
+- Compromise or monitor multiple relay nodes across the network
+- Capture and log all incoming connections with their source IPs
+- Perform long-term traffic analysis to correlate voting message timing patterns with connection sources
+- Cross-reference voting signatures with on-chain stake distribution
+- Maintain persistent surveillance over extended time periods as node IPs and relay connections change
 
+In P2P Architecture, an Attacker would need to:
+
+- Deploy a Sybil attack by flooding the network with malicious nodes to maximize mesh visibility
+- Build a topology map of peer connections across the network
+- Perform first-propagator detection to identify likely sources of proposals and votes
+- Execute timing analysis across multiple observation points to triangulate message origins
+- Correlate cryptographic voting patterns with network-level propagation patterns
+- Sustain this sophisticated traffic analysis infrastructure continuously
+
+
+Targeting is effectively impossible. Since the attacker cannot discover the physical IP address or hosting location of high-stake validator accounts without executing these complex, expensive, and detectable attack chains, they are fundamentally unable to "aim for the largest accounts" with a targeted DDoS attack.
+
+But let's say they somehow are able to determine the mapping of account to IP address
+(through social engineering, etc). DoS attacks of the largest staked accounts would still be difficult 
+to execute due to the following factors.
+- **Infrastructure robustness**: Major operators run enterprise-grade DDoS protection, multi-region redundancy, and professional network defenses
+- **Geographic distribution**: No single network location controls decisive stake; suppression requires coordinated global attacks
+- **Economic cost**: Sustained DDoS against fortified infrastructure at cloud-provider scale remains expensive
+- **Detection and response**: Network-layer attacks at this scale are immediately visible and trigger operational countermeasures
+- **Self-healing property**: Any single unsuppressed proposer per round regenerates unpredictability, limiting attack persistence
+
+**All of these impediments to DoS exist TODAY under classical cryptography.** 
+
+### What Quantum VRF Compromise Adds
+
+A quantum adversary capable of extracting VRF private keys gains some **tactical precision** but does not fundamentally change the strategic landscape:
+
+**New capabilities:**
+- **Round-specific prediction**: May know to a limited degree that a specific whale account will propose 
+in an specific upcoming round
+- **Multi-round optimization**: Identify correlated windows where multiple high-value targets are simultaneously vulnerable
+- **Seed grinding**: Selectively withhold proposals in advantageous branches
+- **Committee timing**: Predict exact rounds where specific operators hold decisive committee weight
+
+**Unchanged barriers:**
+All of the barriers present in the classical enviroment (anonymity, etc) still exist in the PQ compromise
+scenario.
+
+### The Correct Framing
+
+**Classical setting (today):**
+- Adversary knows: "Account A controls 2% of stake and will be selected ~700 times today"
+- Invisibility: Must somehow determine IP address from Account
+- Attack feasibility: Must sustain suppression against professionally-protected, globally-distributed infrastructure
+- Operational cost: Prohibitively expensive for sustained liveness degradation
+
+**Quantum setting (PQ VRF compromise):**
+- Adversary knows: "Account A will most likely propose at rounds 1,000,042 and 1,000,089 and will be 
+in soft-vote committee at round 1,000,103"
+- Invisibility: **Unchanged** - still must somehow determine IP address from Account
+- Attack feasibility: **Unchanged** - still must suppress the same professionally-protected infrastructure
+- Operational cost: **Unchanged** - temporal precision does not reduce DDoS cost against fortified targets
+
+The delta is **tactical optimization** (when to concentrate effort) rather than **strategic transformation** 
+(ability to execute suppression). An adversary who cannot localte the whale's IP address and suppress 
+their infrastructure today will not gain that capability merely from knowing precise timing.
+
+### 12.1A — Block Proposers (Proposal Step)
+
+Now, let's consider that to halt block production, an adversary must suppress **every** block proposer that
+self-selects due to having a winning VRF lottery ticket. Even ONE honest proposer that is not successfully 
+DoS'd produces the block. 
+
+Thus to supopress block production via DoS, an attacker must :
+- Simultaneously target 15-20 VRF-selected operators with apriori-known IP address
+- Sustain attacks across globally distributed infrastructure
+- Overcome enterprise DDoS mitigation at multiple cloud providers
+- Maintain suppression continuously (even one proposer per round that escapes DoS restores progress)
+
+**PQ VRF compromise changes timing precision, not target identity or infrastructure resilience.
+** The same large operators who are proposers today remain the targets tomorrow. 
+Knowing round numbers does not make IP addresses easy to discover, bypass DDoS protection or 
+reduce operational costs.
+
+**Conclusion**: Proposer DoS remains a **bounded liveness threat** under both classical and 
+quantum settings. PQ VRF compromise provides tactical optimization but does not 
+materially increase attack feasibility. The operational barriers (invisibility, infrastructure 
+robustness, geographic distribution, economic cost) are unchanged.
+
+### 12.1B — Committee Members (Voting Steps)
+
+BA★ safety depends on honest supermajority in each voting step (soft-vote, certify-vote, final-vote). The critical insight: **committee weight, not committee size, determines safety.**
+
+- Top 30-40 operators contribute 60-70% of total committee weight
+- They run the same professionally-protected infrastructure
+- They are already continuously exposed due to high selection frequency
+
+To violate safety, an adversary must suppress **>2/3 of total stake weight** across all three voting steps. This requires:
+- Suppressing 20-30 major operators simultaneously
+- Maintaining suppression across sequential voting steps (~10-15 seconds)
+- Overcoming enterprise infrastructure defenses at each target
+- Doing this repeatedly across multiple rounds to achieve finality manipulation
+
+**PQ VRF compromise reveals:**
+- Which specific operators are in each committee. 
+- Their relative weight in that committee
+- The exact timing of their participation
+
+BUT overwhelmingly the committee is already naturally dominated by whale accounts, in which case PQ VRF compromise doesn't buy much information.
+
+**PQ VRF compromise does NOT change:**
+- The identity of high-value targets (already known from stake distribution)
+- The infrastructure protection these operators deploy
+- The operational cost of suppressing >2/3 stake simultaneously
+- The detection risk from network-wide attacks
+
+**The decisive point**: Knowing that "Account A holds 2% of soft-vote committee weight at round 1,234,567" 
+provides no advantage if you don't know their IP and cannot suppress the account's infrastructure in 
+the first place. The temporal precision is irrelevant when the operational barrier remains intact.
+
+**Conclusion**: Committee DoS feasibility is **unchanged** under PQ VRF compromise. The threat exists at the same level today: 
+theoretically possible but operationally implausible against invisibility and modern infrastructure 
+defenses. 
+
+### Scope of Falcon Envelopes
+
+Falcon Envelopes restore **authentication**, not **anonymity**. They eliminate the catastrophic threat (signature forgery enabling impersonation) while accepting the bounded liveness risk (predictability enabling optimized but not fundamentally easier DoS).
+
+This is the correct engineering prioritization because:
+1. **The DoS threat exists today** at approximately the same operational difficulty
+2. **Signature forgery is novel and catastrophic** - it creates attack vectors that don't exist classically
+3. **Infrastructure defenses are effective** - professional operators already mitigate network-layer attacks
+4. **Self-healing limits damage** - randomness regeneration bounds attack persistence
+5. **Future PQ-VRF deployment** can address residual predictability concerns without requiring immediate architectural changes
+
+VRF secrecy loss does not create new attack feasibility; it provides marginal tactical improvement to an already difficult operational challenge. The real defense is—and always has been—infrastructure robustness, not cryptographic unpredictability.
+
+1
 ## 12.2 Account-Layer Quantum Resistance
 
 Falcon Envelopes secure **consensus message authentication** but do not address **account 
