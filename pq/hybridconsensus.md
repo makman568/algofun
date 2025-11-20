@@ -510,7 +510,7 @@ BA★ committees are stake-proportional. The vast majority of committee weight�
 Conclusion: Committee DoS feasibility is unchanged with PQ VRF compromise; it remains operationally implausible and poses no threat to BA★ safety.
 
 **Scope of Mitigation:**
-Falcon Envelopes restore authentication, not secrecy. They prevent an attacker from impersonating committee members, but they cannot prevent a well-resourced adversary from attemptint to silence nodes through network-layer attacks. This risk exists today via DoS attack of the largest accounts ; it is not an issue magnified by PQ VRF compromise.
+Falcon Envelopes restore authentication, not secrecy. They prevent an attacker from impersonating committee members, but they cannot prevent a well-resourced adversary from attempting to silence nodes through network-layer attacks. This risk exists today via DoS attack of the largest accounts ; it is not an issue magnified by PQ VRF compromise.
 
 ## 12.2 Account-Layer Quantum Resistance
 
