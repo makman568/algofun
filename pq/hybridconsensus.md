@@ -1,9 +1,11 @@
 # Algorand Post-Quantum Consensus before PQ-VRF
-## Falcon Envelope Architecture v0.1
+## Falcon Envelopes
 
 # 1. Introduction
 This paper proposes a technique that effectively provides for the PQ safety of Algorand 
-consensus before the long-term goal of a Post-Quantum VRF is realized.
+consensus before the long-term goal of a Post-Quantum VRF is put into place. It is NOT meant 
+to replace the full PQ-VRF solution that will eventually be put into place; instead, it 
+proposes a way to achieve quantum safety before today's elliptic-curve VRF is upgraded.
 
 Algorand's consensus protocol requires that all committee messages be authentically linked
 to the participation key owner. Quantum computers breaking participation-key identities put that
@@ -12,9 +14,6 @@ relies on message authenticity. Falcon Envelopes provide a minimal PQ authentica
 wrapping each BA★ message in a Falcon-1024 signature. Wrappers are verified during gossip and
 cached temporarily for catchup peers. No block-format changes, no ledger growth, and no protocol
 redesign. 
-
-NOTE: This proposal addresses only post-quantum consensus authentication.
-Algorand already supports post-quantum account-level authentication today via falcon_verify LogicSigs, so account-layer PQ migration is out of scope and does not require changes to consensus.
 
 # 2. Background
 Algorand's security comes from three components: VRF-based eligibility, Ed25519 authentication,
@@ -35,7 +34,7 @@ messages are dropped automatically. BA★ safety and liveness remain intact.
 
 **Properties Lost:**
 - **Committee secrecy:** Adversary can predict current round selection once seed is published
-- **Player replaceability:** Targeted DoS attacks become easier
+- **Player replaceability:** Targeted DoS attacks become somewhat possible, though with great difficulty.
 - **VRF unpredictability:** Future outputs computable once seed is known
 
 **Properties Preserved:**
@@ -452,48 +451,9 @@ Existing defenses remain effective:
 **Assessment:** Falcon overhead does not enable new DoS attacks. The existing
 Byzantine resistance mechanisms handle the modest increase in verification cost.
 
-# 10. Comparison With Alternative PQ Approaches
+# 10. Benefits of the Falcon Envelopes Approach
 
-Falcon Envelopes outperform alternative post-quantum designs in simplicity, efficiency, and
-compatibility with Algorand's architecture.
-
-## 10.1 PQ-VRF Replacement
-**Approach:** Replace EC-VRF with a post-quantum VRF.
-
-**Problems:**
-- PQ-VRFs are large (multi-KB proofs), slow (seconds of generation), and not standardized
-- VRF provides anonymity and Sybil resistance, but BA★ safety depends solely on message authenticity
-- Replacing VRF adds massive complexity without improving safety
-- No production-ready PQ-VRF exists (research-stage only)
-
-**Falcon Envelopes advantage:** VRF remains classical; only authentication is upgraded.
-
-## 10.2 Threshold or Aggregated Certificates
-**Approach:** Construct PQ threshold signatures or aggregate certificates for block finalization.
-
-**Problems:**
-- PQ-threshold signatures impose megabyte-scale overhead per block
-- Require on-chain storage (ledger bloat)
-- Require new consensus rules for certificate assembly
-- Add verification latency for threshold reconstruction
-- Break Algorand's lightweight block design philosophy
-
-**Falcon Envelopes advantage:** No certificates, no aggregation, no on-chain storage.
-
-## 10.3 Historic Vote Storage
-**Approach:** Store individual votes or vote digests on-chain for verifiability.
-
-**Problems:**
-- Fundamentally contradicts Algorand's design (votes are ephemeral)
-- Massive ledger bloat (thousands of votes per block)
-- Complicates catchup (must download and verify all historic votes)
-- Increases sync time from minutes to hours/days
-
-**Falcon Envelopes advantage:** Votes remain ephemeral; only temporary cache for recent rounds.
-
-## 10.4 Falcon Envelopes (Recommended)
-**Advantages:**
-- No new cryptographic primitives (reuses existing Falcon-1024)
+- No new cryptographic primitives (reuses existing Falcon-1024); only NIST-selected algorithms used.
 - No changes to block structure or ledger format
 - No heavy certificate machinery or aggregation
 - Reuses existing participation key infrastructure
@@ -505,91 +465,57 @@ compatibility with Algorand's architecture.
 
 # 11. Conclusion
 
-Falcon Envelopes restore post-quantum security to Algorand's consensus by securing the only
+Falcon Envelopes enable post-quantum security to Algorand's consensus by securing the 
 property BA★ truly needs: authenticated committee messages. VRF verification remains functional
-(committee selection cannot be forged), but VRF secrecy is lost (selection becomes predictable).
+(committee selection cannot be forged), but granted, VRF secrecy is lost (selection becomes 
+predictable). This is deemed acceptable even under attack as the ability to exploit this is extremely limited.
 Consensus logic, block structure, and ledger format remain unchanged. Falcon-1024 wrappers
 introduce modest bandwidth overhead (1.7-2× increase) and minimal storage overhead (30-80 MB RAM
 cache) but avoid megabyte-scale certificate growth and on-chain bloat.
 
 Falcon Envelopes represent the simplest, safest, and most architecturally compatible PQ upgrade
-path for Algorand. By reusing existing Falcon-1024 keys from the state proof system and
+path for Algorand pre PQ-VRF. By reusing existing Falcon-1024 keys from the state proof system and
 maintaining all BA★ protocol invariants, this approach minimizes implementation risk while
 providing complete post-quantum authentication security.
 
-**Migration and network upgrade procedures will be addressed in a separate proposal.**
-
 # 12. Limitations and Scope
-
-Falcon Envelopes are designed to solve a specific cryptographic failure: the **forgery of
-consensus messages** by a quantum adversary. They do not address all theoretical impacts of a
-CRQC (Cryptographically Relevant Quantum Computer).
 
 ## 12.1 Loss of VRF Secrecy (DoS Risk)
 
-Algorand's classical "Secret Self-Selection" relies on the unpredictability of the VRF output
-before it is broadcast. This property provides **player replaceability** and DoS resistance.
+12.1A — Block Proposers (Proposal Step)
 
-**The CRQC Threat:**
-A quantum adversary who derives the EC-VRF private keys can predict future lottery winners
-(block proposers and committee members) before they broadcast their selection proof. This
-enables **targeted DoS attacks** against specific committee members.
+A CRQC able to recover EC-VRF keys could predict the next set of proposers (~20 accounts). 
+In theory, this enables targeted DoS. In practice, the attack remains non-catastrophic:
 
-**Attack Scenario:**
-```
-1. Quantum adversary derives VRF secret keys from public keys
-2. Once seed for round R is published, adversary computes all VRF outputs
-3. Adversary identifies which nodes will be selected for round R
-4. Adversary launches network-layer attacks (DDoS, routing blackholes) against those nodes
-5. Selected nodes cannot broadcast their votes/proposals
-6. Consensus slowed or temporarily halted (liveness degraded)
-```
+* To stop block production, an attacker must DoS every proposer; a single unsuppressed proposer 
+produces the block. 
+* Proposers are dominated by large operators already hosted behind 
+professional DDoS protection. 
+* There is no direct mapping from account → IP; locating nodes requires difficult network-layer inference.
+* PQ VRF compromise changes timing of selection, not identity of targets; the same few large 
+operators are proposers today.
+
+Conclusion: PQ VRF secrecy loss does not make proposer DoS materially more feasible. This remains a bounded liveness issue, not a safety threat.
+
+12.1B — Committee Members (Voting Steps)
+
+BA★ committees are stake-proportional. The vast majority of committee weight—what matters for safety—is contributed by the same 30–40 large operators. PQ VRF compromise provides no meaningful advantage:
+
+* To violate safety, an attacker must suppress >2/3 of total stake weight, not individual accounts.  
+* The decisive targets (large operators) are already publicly known today; PQ-VRF compromise does not reveal new ones.
+* These operators run in redundant data-center environments with modern DDoS protection.
+* VRF secrecy loss provides only timing precision, not new vulnerabilities.
+* The mapping of account to IP address is still extremeley difficult 
+
+Conclusion: Committee DoS feasibility is unchanged with PQ VRF compromise; it remains operationally implausible and poses no threat to BA★ safety.
 
 **Scope of Mitigation:**
-Falcon Envelopes do **not** restore VRF secrecy. They ensure that an attacker cannot
-**impersonate** a node (authentication), but they cannot prevent an attacker from **silencing**
-a node (availability).
-
-**Impact Assessment:**
-- **Safety:** Unaffected (cannot forge messages even if nodes are silenced)
-- **Liveness:** Potentially degraded (targeted DoS can slow consensus)
-- **Recovery:** BA★ automatically adjusts with larger committees if needed
-
-**Mitigation Strategy:**
-This risk is **orthogonal to the signature scheme**. It must be mitigated at the networking
-layer or via future cryptographic upgrades:
-
-**Network-Layer Defenses:**
-- P2P anonymity networks (Tor integration, mixnets)
-- Non-public IP relay infrastructure
-- Decentralized relay pools with dynamic routing
-- Geographic distribution of relay nodes
-- Cloud-based DDoS mitigation services
-
-**Future Cryptographic Upgrades:**
-- Post-Quantum VRF (PQ-VRF) deployment when standardized and efficient
-- Threshold VRF schemes (multi-party computation for unpredictability)
-- Commit-and-reveal schemes for delayed selection disclosure
-
-**Conclusion:**
-Falcon Envelopes are the **authentication layer solution**, not the **anonymity layer solution**.
-Committee secrecy and DoS resistance require separate mitigation strategies beyond the scope of
-this proposal.
+Falcon Envelopes restore authentication, not secrecy. They prevent an attacker from impersonating committee members, but they cannot prevent a well-resourced adversary from attemptint to silence nodes through network-layer attacks. This risk exists today via DoS attack of the largest accounts ; it is not an issue magnified by PQ VRF compromise.
 
 ## 12.2 Account-Layer Quantum Resistance
 
-Falcon Envelopes secure **consensus message authentication** but do not address **account key
+Falcon Envelopes secure **consensus message authentication** but do not address **account 
 security**.
-
-**Out of Scope:**
-- Spending keys for account transactions
-- Smart contract signature verification
-- Multi-signature accounts
-- Rekeying mechanisms
-
-**Separate Solution Required:**
-Account-layer post-quantum migration (e.g., Falcon-based LogicSigs, PQ rekeying) is addressed
-in separate proposals and is independent of consensus authentication.
 
 ## 12.3 State Proof Dependency
 
