@@ -16,7 +16,7 @@ equally to relay networks, P2P networks, and hybrid configurations.
 **Methodology:**
 - Statistical derivation from source-code parameters combined with measured stake fractions (no heuristics)
 - Inputs: consensus parameters, the November 21, 2025 stake CSV, and agreement-layer propagation rules
-- Output: predicted message counts that align with the instrumented telemetry in `consensus_message_volume_empirical.md`
+- Output: predicted message counts that align with instrumented telemetry from the `consensus_messages.csv` log file.
 
 **Mathematical Prediction with Nov-21-2025 stake distribution:**
 
@@ -149,10 +149,10 @@ online accounts (from `algorand-consensus.csv`) gives the expected number of uni
 | Cert  | 1,500          | **≈ 232** |
 | Next  | 5,000          | **≈ 476** |
 
-Telemetry in `consensus_message_volume_empirical.md` matches these expectations after accounting for threshold
-termination: relays observe ~280-340 soft votes and ~130-165 cert votes per round, even before next votes are logged.
-The prediction for next votes (330-470) will be testable once next-vote instrumentation lands, and it already reflects
-the hundreds of mid-tier accounts that regularly emit at least one next vote.
+These mathematical expectations are validated by on-chain telemetry from the `consensus_messages.csv` log file,
+which shows that relays observe **~280-340 soft votes** and **~130-165 cert votes** per round after accounting for
+threshold termination (which stops propagation before all expected voters appear). The prediction for next votes
+(330-470) is derived from the same mathematical model and will be testable once next-vote instrumentation lands.
 
 #### Total Per Normal Round
 
@@ -489,10 +489,10 @@ Two facts emerge:
 1. **High-stake operators do not vote every round.** Even a 3.5% account has probability `1 - e^{-0.035 × 2,990} ≈ 0.9999`
    of appearing in soft, but a 0.2% account only has `1 - e^{-0.002 × 2,990} ≈ 0.997`. The quorum still depends on dozens
    of such mid-tier participants winning at least one ticket.
-2. **Agreement-layer logging matches this math.** The CSV-derived expectations line up with the measurements in
-   `consensus_message_volume_empirical.md`, which report ~300 soft votes and ~150 cert votes per round. The difference
-   between “hundreds of votes relayed” and “tens of votes in the final certificate” is precisely the relay-side behavior
-   this paper models.
+2. **Agreement-layer logging matches this math.** The CSV-derived expectations line up with telemetry from the
+   `consensus_messages.csv` log, which consistently records **~280-340 soft votes** and **~130-165 cert votes**
+   per round. The difference between “hundreds of votes relayed” and “tens of votes in the final certificate” is
+   precisely the relay-side behavior this paper models.
 
 Therefore, updating the stake model to the observed November 2025 distribution directly explains the higher message
 volume: the Poisson selection of hundreds of mid-tier accounts produces 400-500 authenticated messages per round even
