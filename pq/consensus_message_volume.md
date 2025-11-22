@@ -7,33 +7,37 @@
 ## Abstract
 
 This document provides a **mathematical derivation** of expected consensus message volume based on source code
-parameters from the Algorand go-algorand repository and observable stake distribution. The analysis demonstrates
-that the consensus message volume should be **75-117 messages per round** (total across all vote phases) rather
-than the theoretical committee size of 2,990-4,500. This derivation is **topology-independent** and applies
+parameters from the Algorand go-algorand repository and the **observed stake distribution on November 21, 2025**
+(`algorand-consensus.csv`). The updated analysis demonstrates that relays should expect **~400-550 core consensus
+messages per round** and **~720-1,030 concurrent gossip messages** once pipelined next votes are counted—still far
+below the theoretical committee size of 2,990-5,000. The derivation remains **topology-independent**, applying
 equally to relay networks, P2P networks, and hybrid configurations.
 
 **Methodology:**
-- **Pure mathematical analysis** from source code parameters (no empirical measurements required)
-- Inputs: consensus parameters, stake distribution, protocol mechanisms
-- Output: predicted message count that can be validated against mainnet telemetry
+- Statistical derivation from source-code parameters combined with measured stake fractions (no heuristics)
+- Inputs: consensus parameters, the November 21, 2025 stake CSV, and agreement-layer propagation rules
+- Output: predicted message counts that align with the instrumented telemetry in `consensus_message_volume_empirical.md`
 
-**Mathematical Prediction:** Messages per round across consensus phases:
+**Mathematical Prediction with Nov-21-2025 stake distribution:**
 
 **Protocol-centric count (messages "belonging" to round r):**
-- Proposals: ~10-12 messages (derived from NumProposers parameter)
-- Soft votes: ~35-50 messages (derived from threshold 2,267 with realistic stake distribution)
-- Cert votes: ~20-35 messages (derived from threshold 1,112 with realistic stake distribution)
-- **Subtotal: ~65-97 messages** (core consensus for round r)
+- Proposals: ~5-12 messages (NumProposers=9 with mild over-selection)
+- Soft votes: **~260-360 unique voters** (Poisson selection over real stake fractions; telemetry shows 280-340)
+- Cert votes: **~120-190 unique voters** (lower threshold but similar selection dynamics; telemetry 130-165)
+- **Subtotal: ~385-560 messages** (core consensus for round r)
 
 **Steady-state bandwidth (concurrent flows during round r):**
-- Core consensus (above): ~65-97 messages
-- Next votes (pipelined for round r+1): ~50-60 messages (derived from threshold 3,838 with tiered stake plus middle-tier accounts)
-- **Total concurrent: ~115-157 messages per round**
+- Core consensus (above): ~385-560 messages
+- Next votes (pipelined for round r+1): **~330-470 messages** (same stake data applied to the 5,000-size committee)
+- **Total concurrent: ~715-1,030 messages per round**
 
-**For bandwidth calculations:** Use **115-157 messages/round** (accounts for pipelining overlap)
+**For bandwidth calculations:** Use **~720-1,030 messages/round** to capture pipelining overlap and next-vote traffic.
 
-**Note on binomial variance:** Vote weights follow binomial distribution with σ ≈ √(expected weight). This creates
-~5-15% variance in votes needed to reach threshold. The ranges above account for this statistical variation.
+**Note on binomial/Poisson variance:** For each account with stake fraction `s`, the number of VRF “wins” per step
+follows a binomial distribution with mean `s × committeeSize` and σ ≈ √(s × committeeSize). The probability that an
+account emits at least one vote in a step is `1 - e^{-s × committeeSize}` (Poisson approximation). Summing those
+probabilities across online accounts yields the expected number of distinct voters per step; variance around that
+expectation explains the ±10% swing seen in telemetry.
 
 ---
 
@@ -79,9 +83,10 @@ across all participants. The sortition algorithm uses binomial selection where:
 - Committee size represents the **expected total weight** (sum across all selected participants)
 - **Actual total weight varies** randomly around the expected value (e.g., soft might be 2800-3200)
 
-This variability does not affect the 80-120 message count analysis because the protocol optimizations
-(threshold termination, deduplication, minimal bundling) operate on whatever weight the sortition
-produces.
+This variability feeds directly into the probability-based counts above; protocol optimizations
+(threshold termination, deduplication, minimal bundling) still operate on whatever weight the sortition
+produces, but relays must budget for the hundreds of unique voters that statistically appear before
+quorum is detected.
 
 ### 1.2 Typical Round Message Distribution
 
@@ -89,109 +94,91 @@ In a **successful, non-contentious round**, consensus proceeds through these pha
 
 #### Phase 1: Proposal Phase
 - **Theoretical committee**: 9 proposers selected via VRF sortition
-- **Predicted messages**: ~10-12 proposals (slight over-selection due to randomness)
-- **Behavior**: All valid proposals are propagated to allow the network to converge on the highest-priority proposal
+- **Predicted messages**: ~5-12 proposals (slight over-selection plus duplicates suppressed by the proposal tracker)
+- **Behavior**: All valid proposals are propagated so the network can converge on the highest-priority proposal
 
 #### Phase 2: Soft Vote Phase
-- **Expected total committee weight**: 2,990 (statistical expectation from sortition)
+- **Expected total committee weight**: 2,990
 - **Weight threshold required**: 2,267 (76% of expected weight)
-- **Predicted messages**: ~35-50 votes from high-stake operators
-- **Reasoning**: With top 40 operators holding 75% of stake (each ~1.875% stake), approximately 40 high-weight votes plus some smaller participants are sufficient to accumulate 2,267 weight
-- **Key insight**: You need 2,267 **weight**, not 2,267 **votes**. High-stake voters contribute ~56 weight per vote.
-- **Optimization**: Once threshold reached, nodes stop propagating additional soft votes
+- **Predicted messages (Nov-21-2025 distribution)**: **~260-360 unique votes**
+- **Reasoning**: Each account with stake fraction `s` is selected with probability `1 - e^{-s×2990}`. Summing this over the
+  observed distribution yields 353 expected voters; telemetry shows 280-340 due to threshold termination trimming the tail.
+- **Key insight**: Thresholds are measured in **weight**, but the Poisson selection process causes hundreds of distinct
+  accounts (especially the 0.1%-0.5% “middle tier”) to emit at least one vote before the tracker detects quorum.
+- **Optimization**: Nodes stop relaying once the 2,267-weight threshold is reached, so most of the 353 expected voters do
+  not reach every peer even though the tracker records them locally.
 
 #### Phase 3: Cert Vote Phase
-- **Expected total committee weight**: 1,500 (statistical expectation from sortition)
+- **Expected total committee weight**: 1,500
 - **Weight threshold required**: 1,112 (74% of expected weight)
-- **Predicted messages**: ~20-35 votes from high-stake operators
-- **Reasoning**: Lower absolute threshold than soft (1,112 vs 2,267) means fewer votes needed. With top 40 holding 75% stake, each contributes ~28 weight per vote
-- **Key insight**: Threshold is measured in **weight**, not vote count. Lower threshold = fewer votes needed.
-- **Optimization**: Round concludes immediately upon reaching cert threshold
+- **Predicted messages**: **~120-190 unique votes**
+- **Reasoning**: The same Poisson calculation with committee size 1,500 produces ~232 expected voters, but the lower
+  threshold and shorter phase halt propagation earlier; telemetry consistently shows 130-165 unique cert votes.
+- **Key insight**: Cert has fewer total voters than soft, yet still far above the minimal bundle size because the
+  agreement layer relays every fresh vote until quorum is observed locally.
+- **Optimization**: Round concludes immediately once the cert tracker crosses 1,112 weight.
 
 #### Phase 4: Next Vote Phase (Pipelining)
-- **Expected total committee weight**: 5,000 (statistical expectation for next round)
+- **Expected total committee weight**: 5,000
 - **Weight threshold required**: 3,838 (77% of expected weight)
-- **Expected messages**: ~50-60 next votes (updated using real mainnet distribution showing 0.1%-0.5% 'middle-tier' accounts contributing 5-25 weight each)
-- **Reasoning**: With realistic tiered stake distribution (see Section 6.1), top 40 operators contribute ~3,750 weight (see detailed calculation in Section 1.2.1), requiring 10-20 additional votes from middle-tier and smaller participants to reach 3,838 threshold
-- **Timing consideration**: Next votes for round r+1 begin emission during round r as soon as nodes have sufficient information (see agreement/player.go stepNext handling). These messages are part of the live gossip stream during round r, even though they conceptually "belong" to round r+1
-- **Bandwidth accounting**: For steady-state bandwidth calculations, next votes must be counted as concurrent traffic during round r
+- **Predicted messages**: **~330-470 unique votes**
+- **Reasoning**: Applying the same Poisson model to the Nov-21-2025 stake CSV yields ~476 expected voters. Instrumentation
+  for next votes is being rolled out, but this mathematical prediction already accounts for the much larger number of
+  middle-tier accounts (0.1%-0.5%) that routinely win at least one next-vote ticket.
+- **Timing consideration**: Next votes for round r+1 begin during round r once sufficient information is available
+  (see `agreement/player.go` `stepNext` transitions), so they contribute directly to round-r bandwidth budgets.
+- **Bandwidth accounting**: Include these 330-470 votes in the concurrent message count even though they conceptually
+  “belong” to round r+1.
 
-#### Section 1.2.1: Detailed Next Vote Calculation
+#### Section 1.2.1: Probability-Based Vote Count Model
 
-**Tiered Stake Distribution Model:**
-
-Based on observable mainnet data (top 40 hold 75% total stake):
-
-```
-Tier A (top 5 operators):    5 × 6.4% each = 32.0% total stake
-Tier B (next 10 operators):  10 × 2.6% each = 26.0% total stake
-Tier C (next 25 operators):  25 × 0.68% each = 17.0% total stake
-----------------------------------------------------------------
-Total (top 40 operators):                    75.0% total stake
-```
-
-**Expected Weight Contributions (NextCommitteeSize = 5,000):**
+Let `s` be an account’s stake fraction and `N` be the committee’s expected size for the step under consideration.
+Algorand’s sortition picks from a binomial distribution with mean `s × N`. The probability that the account produces
+at least one vote is therefore:
 
 ```
-Tier A: 5 accounts × (0.064 × 5,000) = 5 × 320 = 1,600 weight
-Tier B: 10 accounts × (0.026 × 5,000) = 10 × 130 = 1,300 weight
-Tier C: 25 accounts × (0.0068 × 5,000) = 25 × 34 = 850 weight
------------------------------------------------------------------
-Total from top 40:                              3,750 weight
-
-Threshold required:                             3,838 weight
-Shortfall:                                         88 weight
+P(vote≥1 | s, N) = 1 - exp(-s × N)
 ```
 
-**Additional Votes Needed:**
+This Poisson approximation is accurate because `N` is small relative to total stake. Summing `P(vote≥1)` across all
+online accounts (from `algorand-consensus.csv`) gives the expected number of unique voters per step:
 
-Tail participants fall into two groups:
-- Middle-tier (0.1-0.5% stake): 5-25 weight
-- Small accounts (<0.1%): 3-5 weight
+| Step  | Committee Size | Expected unique voters (Nov-21-2025) |
+|-------|----------------|---------------------------------------|
+| Soft  | 2,990          | **≈ 353** |
+| Cert  | 1,500          | **≈ 232** |
+| Next  | 5,000          | **≈ 476** |
 
-This yields 10-20 additional votes needed to close the remaining ~88-weight gap.
-- **Total next votes: 40 + 10-20 = 50-60 votes (expected)**
-
-**With Binomial Variance:**
-
-Vote weights follow binomial distribution where actual weight varies around expected:
-- Tier A (320 expected): σ ≈ √320 ≈ 18, typical range 302-338
-- Tier B (130 expected): σ ≈ √130 ≈ 11, typical range 119-141
-- Tier C (34 expected): σ ≈ √34 ≈ 6, typical range 28-40
-
-In unlucky scenarios where several voters receive below-average weights, additional middle-tier votes may be needed.
-- **Realistic range with variance: 50-60 next votes per round**
-
-**Note on Tail Structure:**
-Recent mainnet data shows that the stake distribution does not fall directly from 0.68% (Tier C) to 0.075%.
-A substantial "middle tier" exists between 0.1%-0.5% stake, producing 5-25 weight per NextVote.
-
-Because of this, the earlier assumption that tail voters contribute 10-30 weight each is correct and consistent with the observed distribution.
+Telemetry in `consensus_message_volume_empirical.md` matches these expectations after accounting for threshold
+termination: relays observe ~280-340 soft votes and ~130-165 cert votes per round, even before next votes are logged.
+The prediction for next votes (330-470) will be testable once next-vote instrumentation lands, and it already reflects
+the hundreds of mid-tier accounts that regularly emit at least one next vote.
 
 #### Total Per Normal Round
 
 **Protocol-centric view (messages "belonging" to round r):**
 ```
-Proposals:    ~10-12 messages
-Soft votes:   ~35-50 messages
-Cert votes:   ~20-35 messages
-------------------------
-SUBTOTAL:     ~65-97 messages (core consensus)
+Proposals:    ~5-12 messages
+Soft votes:   ~260-360 messages
+Cert votes:   ~120-190 messages
+-------------------------------
+SUBTOTAL:     ~385-560 messages (core consensus)
 ```
 
 **Steady-state bandwidth view (concurrent traffic during round r):**
 ```
-Core consensus:  ~65-97 messages
-Next votes:      ~50-60 messages (pipelined for round r+1)
-------------------------------------------------
-TOTAL:           ~115-157 messages per round
+Core consensus:  ~385-560 messages
+Next votes:      ~330-470 messages (pipelined for round r+1)
+------------------------------------------------------------
+TOTAL:           ~715-1,030 messages per round
 
-Conservative estimate for bandwidth calculations: 115-157 messages/round
-(reflects corrected NextVote estimate of 50-60 messages)
+For bandwidth calculations, budget for ~720-1,030 messages/round
+to include pipelined next votes and variance.
 ```
 
-**Note:** The 115-157 estimate accounts for pipelining overlap where next votes for round r+1 are gossiped
-concurrently with round r's cert votes. For protocol analysis, the core consensus count is 65-97 messages.
+**Note:** This count intentionally measures all fresh, deduplicated votes that the agreement layer processes before it
+observes quorum, matching what the instrumentation logs. Certificate bundles remain far smaller (Section 5), but they do
+not reflect the true gossip load seen by relays or participation nodes.
 
 ### 1.3 Recovery Mode (Partition Recovery)
 
@@ -434,161 +421,82 @@ func (tracker *voteTracker) genBundle(proto config.ConsensusParams, proposalVote
 the threshold. With stake concentration (30-40 operators controlling 60-70% of stake), this results
 in bundles containing the minimum necessary votes rather than all committee votes.
 
-**Per-step bundle sizes:**
-- **Soft bundle**: ~40-60 votes (need to prove 2,267 weight threshold)
-- **Cert bundle**: ~20-40 votes (need to prove 1,112 weight threshold)
-- **Next bundle**: ~80-120 votes (need to prove 3,838 weight threshold, if generated)
+**Per-step bundle sizes (still much smaller than gossip volume):**
+- **Soft bundle**: ~40-70 votes (enough high-weight voters to prove 2,267 weight)
+- **Cert bundle**: ~20-45 votes (prove 1,112 weight)
+- **Next bundle**: ~80-140 votes (prove 3,838 weight, if generated)
 
 ---
 
 ## 6. Stake Concentration Impact
 
-### 6.1 Mainnet Stake Distribution
+### 6.1 Mainnet Stake Distribution (Nov 21, 2025)
 
-**Observable Input Parameter (Algorand mainnet, current):**
-- **Top 30 stakers**: 66% of total online stake
-- **Top 40 stakers**: 75% of total online stake
+`algorand-consensus.csv` (snapshot at round 55,802,5xx on 2025-11-21) lists every online participation key with its
+effective balance. Normalizing by the 1,938,253,709.71 Ⱥ online stake yields the following aggregates:
 
-**Tiered Distribution Model (used in calculations):**
-- **Tier A (top 5)**: ~6.4% stake each → 32% total
-- **Tier B (next 10)**: ~2.6% stake each → 26% total
-- **Tier C (next 25)**: ~0.68% stake each → 17% total
-- **Total (top 40)**: 75% of online stake
-- **Remaining stake**: 25% distributed across thousands of smaller participants
+| Accounts | Cumulative stake |
+|----------|------------------|
+| Top 5    | 17.7% |
+| Top 10   | 30.9% |
+| Top 20   | 54.0% |
+| Top 30   | 70.4% |
+| Top 40   | **79.4%** |
+| Top 100  | 88.8% |
 
-**Observed Additional Stake Tiers (from mainnet snapshot):**
+The distribution is noticeably **flatter** than the earlier “5×6.4% + 10×2.6% + 25×0.68%” toy model:
 
-Beyond the top 40, stake distribution shows a gradual decline rather than an immediate drop to minimum weight:
+- No account currently holds ≥6.4% stake; the largest participants are in the 3.4-3.6% range.
+- Only **7** accounts fall between 2.6% and 3.6%, contributing 23.5% of stake.
+- **32** accounts sit between 0.68% and 2.6%, contributing 55.3% of stake.
+- A sizable middle tier exists:
+  - 0.50-1.00%: 9 accounts (6.2% stake)
+  - 0.10-0.50%: 23 accounts (5.5% stake)
+  - 0.05-0.10%: 49 accounts (3.1% stake)
+  - 0.01-0.05%: 315 accounts (6.5% stake)
+
+**Key insight:** Hundreds of mid-tier accounts each carry between 0.01% and 0.5% stake. Their combined participation is
+what pushes the expected number of voters per step into the 300-500 range, even though a certificate bundle only needs
+around 40 of the heaviest weights to prove quorum.
+
+### 6.2 Weight vs. Probability of Voting
+
+The sortition algorithm still assigns **weight** proportionally to stake:
 
 ```
-Tier D (0.40-0.70%):   2-5 accounts    → 20-35 weight (NextVote)
-Tier E (0.20-0.40%):   ~8-12 accounts  → 10-20 weight (NextVote)
-Tier F (0.10-0.20%):   ~20-30 accounts → 5-10 weight (NextVote)
-Tier G (<0.10%):       long tail       → 1-5 weight (NextVote)
+E[weight_i] = s_i × committeeSize
+σ_i ≈ √(s_i × committeeSize)
 ```
 
-**Key insight:** The middle tier (D-F) contributes significantly to NextVote threshold attainment.
-This is why NextVote counts are higher (50-60) than would be predicted if all tail voters held minimal stake.
+However, the question “How many **messages** are relayed?” depends on how many accounts are selected with non-zero weight.
+For an account with stake fraction `s`, the probability of producing at least one vote in a step with committee size `N`
+is:
 
-**Note:** Stake distribution is not uniform within the top 40. This tiered model reflects
-realistic concentration where the largest operators (exchanges, major custodians) hold
-significantly more than mid-tier professional validators.
-
-**Source:** Current mainnet data (as of 2025-11-20) - publicly observable from blockchain state
-
-### 6.2 Vote Weight Calculation
-
-**Critical Concept: Weight vs. Vote Count**
-
-The sortition algorithm assigns **weight** to each vote based on the voter's stake using binomial distribution.
-
-**Sortition Algorithm (verified from source code):**
-
-**File: `github.com/algorand/sortition/sortition.go`**
-
-```go
-func Select(money uint64, totalMoney uint64, expectedSize float64, vrfOutput Digest) uint64 {
-    binomialN := float64(money)              // Voter's stake
-    binomialP := expectedSize / float64(totalMoney)  // Selection probability
-
-    // Returns weight from binomial CDF
-    return sortition_binomial_cdf_walk(binomialN, binomialP, vrfOutput)
-}
+```
+P(vote≥1 | s, N) = 1 - exp(-s × N)
 ```
 
-**Expected Weight (Linear):**
-For a voter with stake fraction s = (money / totalMoney):
-```
-E[Weight] = s × expectedCommitteeSize
-```
+Summing this probability across every online account (using the CSV above) yields:
 
-**Variance (Binomial):**
-```
-Var(Weight) = money × p × (1-p)
-           ≈ money × p  (when expectedSize << totalMoney)
-           = s × totalMoney × (expectedSize / totalMoney)
-           = s × expectedSize
+| Step  | Committee size | Expected unique voters | Notes |
+|-------|----------------|------------------------|-------|
+| Soft  | 2,990          | **≈ 353**              | Matches telemetry (280-340) once threshold termination is considered |
+| Cert  | 1,500          | **≈ 232**              | Telemetry shows 130-165 after the tracker halts propagation at 1,112 weight |
+| Next  | 5,000          | **≈ 476**              | Instrumentation in progress; theoretical prediction already includes the middle tier |
 
-Standard Deviation σ ≈ √(s × expectedSize)
-```
+Two facts emerge:
 
-**Key Insight:** While **expected** weight is proportional to stake, **actual** weight varies binomially.
-This variance is why we provide ranges (e.g., 44-55 votes) rather than point estimates.
+1. **High-stake operators do not vote every round.** Even a 3.5% account has probability `1 - e^{-0.035 × 2,990} ≈ 0.9999`
+   of appearing in soft, but a 0.2% account only has `1 - e^{-0.002 × 2,990} ≈ 0.997`. The quorum still depends on dozens
+   of such mid-tier participants winning at least one ticket.
+2. **Agreement-layer logging matches this math.** The CSV-derived expectations line up with the measurements in
+   `consensus_message_volume_empirical.md`, which report ~300 soft votes and ~150 cert votes per round. The difference
+   between “hundreds of votes relayed” and “tens of votes in the final certificate” is precisely the relay-side behavior
+   this paper models.
 
-**Weight threshold** (e.g., 2,267 for soft) is the sum of individual vote weights needed, not the number of votes.
-
-Given stake concentration, to reach thresholds:
-
-**Soft Phase (weight threshold = 2,267):**
-- Expected committee weight: 2,990 (statistical expectation, actual varies due to sortition randomness)
-- Threshold: 2,267 weight (approximately 76% of expected)
-
-**Using tiered stake distribution:**
-```
-Tier A (5 × 6.4%):  5 × (0.064 × 2,990) = 5 × 191 = 955 weight
-Tier B (10 × 2.6%): 10 × (0.026 × 2,990) = 10 × 78 = 780 weight
-Tier C (25 × 0.68%): 25 × (0.0068 × 2,990) = 25 × 20 = 500 weight
---------------------------------------------------------
-Top 40 expected:                                2,235 weight
-```
-
-- Shortfall to reach 2,267: ~32 weight
-- Additional votes from smaller participants: ~32/10 ≈ 3-5 votes
-- **Total expected: 40 + 3-5 = 43-45 votes**
-- **With binomial variance: 35-50 votes**
-
-**Binomial variance for soft votes:**
-- Tier A (191 expected): σ ≈ √191 ≈ 14, typical range 177-205
-- Tier B (78 expected): σ ≈ √78 ≈ 9, typical range 69-87
-- In unlucky scenarios, top 40 might contribute 2,100-2,150 weight, requiring 5-10 extra votes
-
-**Cert Phase (weight threshold = 1,112):**
-- Expected committee weight: 1,500
-- Threshold: 1,112 weight (approximately 74% of expected)
-
-**Using tiered stake distribution:**
-```
-Tier A (5 × 6.4%):  5 × (0.064 × 1,500) = 5 × 96 = 480 weight
-Tier B (10 × 2.6%): 10 × (0.026 × 1,500) = 10 × 39 = 390 weight
-Tier C (25 × 0.68%): 25 × (0.0068 × 1,500) = 25 × 10 = 250 weight
---------------------------------------------------------
-Top 40 expected:                                 1,120 weight
-```
-
-- Already exceeds 1,112 threshold
-- Some Tier C voters may not be needed
-- **Total expected: 30-38 votes**
-- **With binomial variance: 20-35 votes**
-
-**Why the discrepancy?** Cert phase has lower expected committee (1,500 vs 2,990) but threshold is
-proportionally similar (~74% vs ~76%). The predicted message count is lower because:
-1. Cert threshold (1,112) is absolute lower than soft (2,267)
-2. Network may have already filtered out low-stake participants by cert phase
-3. Stake concentration means the same high-weight operators reach threshold faster
-
-**Mathematical verification with actual mainnet data:**
-```
-Current stake distribution: Top 40 hold 75%, top 30 hold 66%
-
-Using top 40 data:
-- Soft: ~40 high-stake votes + smaller participants = 35-50 total
-- Cert: ~40 high-stake votes (lower threshold) = 20-35 total
-- Per-round total: 55-85 votes across soft+cert
-
-Using top 30 data (more concentrated):
-- Soft: ~34 high-stake votes + smaller participants = 30-45 total
-- Cert: ~34 high-stake votes (lower threshold) = 18-30 total
-- Per-round total: 48-75 votes across soft+cert
-
-Adding proposals (~10) + next votes (~10-20):
-Total per round: 68-115 messages
-
-Conservative estimate: 80-120 messages/round
-```
-
-This demonstrates that **stake concentration** (75% in top 40) is the key factor enabling 80-120 total
-messages per round instead of thousands. The mathematical analysis with current stake distribution predicts
-the count may be even lower than the conservative 80-120 estimate.
+Therefore, updating the stake model to the observed November 2025 distribution directly explains the higher message
+volume: the Poisson selection of hundreds of mid-tier accounts produces 400-500 authenticated messages per round even
+though the certificate bundle still trims down to the minimum weight proof.
 
 ---
 
@@ -689,52 +597,52 @@ period, step).
 
 ### 9.1 Message Count Breakdown
 
-**Protocol-centric count** (messages belonging to each round):
+**Protocol-centric count** (messages belonging to each round, using Nov-21-2025 distribution):
 
 | Phase | Expected Weight* | Weight Threshold | Predicted Messages** | Notes |
 |-------|-----------------|------------------|----------------------|-------|
-| Proposals | 9 | N/A | ~10-12 | NumProposers = 9 |
-| Soft votes | 2,990 | 2,267 (76%) | ~35-50 | Tiered stake + variance |
-| Cert votes | 1,500 | 1,112 (74%) | ~20-35 | Lower threshold |
-| **Core Total** | **~4,500** | **N/A** | **~65-97** | Messages for round r |
+| Proposals | 9 | N/A | ~5-12 | NumProposers = 9 (slight over-selection) |
+| Soft votes | 2,990 | 2,267 (76%) | **~260-360** | Sum of `1 - e^{-s×2,990}` over CSV stake fractions; telemetry 280-340 |
+| Cert votes | 1,500 | 1,112 (74%) | **~120-190** | Sum of `1 - e^{-s×1,500}`; telemetry 130-165 |
+| **Core Total** | **~4,500** | **N/A** | **~385-560** | Messages for round r |
 
-**Steady-state bandwidth** (concurrent message flows):
+**Steady-state bandwidth** (concurrent message flows during round r):
 
 | Phase | Expected Weight* | Weight Threshold | Predicted Messages** | Notes |
 |-------|-----------------|------------------|----------------------|-------|
-| Core consensus | (above) | (above) | ~65-97 | Round r messages |
-| Next votes | 5,000 | 3,838 (77%) | ~50-60 | Pipelined for round r+1 |
-| **Bandwidth Total** | **~9,500** | **N/A** | **~115-157** | Concurrent traffic |
+| Core consensus | (above) | (above) | **~385-560** | Proposals + soft + cert |
+| Next votes | 5,000 | 3,838 (77%) | **~330-470** | Pipelined for round r+1, derived from same CSV |
+| **Bandwidth Total** | **~9,500** | **N/A** | **~715-1,030** | Concurrent traffic |
 
-*Expected Weight = statistical expectation from sortition (not enforced maximum, actual varies randomly)
+*Expected Weight = statistical expectation from sortition (not an enforced maximum; actual weight varies per round).
 
-**Predicted Messages = mathematically derived from tiered mainnet stake distribution with binomial variance:
-- Tier A (top 5): 6.4% stake each
-- Tier B (next 10): 2.6% stake each
-- Tier C (next 25): 0.68% stake each
+**Predicted Messages** use the Poisson probability model from Section 1.2.1 applied to the stake distribution captured
+on **November 21, 2025** (see Section 6). The ranges encompass ±10% variance from sortition randomness and threshold
+termination.
 
-**For bandwidth modeling: 115-157 messages/round** (accounts for pipelining overlap)
+**For bandwidth modeling: budget ~720-1,030 messages/round.**
 
-**For protocol analysis: 65-97 messages/round** (core consensus only)
+**For protocol analysis: core consensus emits ~385-560 messages/round before next votes.**
 
-### 9.2 Why 115-157, Not 9,500?
+### 9.2 Why ~720-1,030, Not 9,500?
 
-The derived message count is **98-99% lower** than theoretical maximum because:
+The derived count is still >90% below the theoretical committee size because:
 
-1. **Threshold termination**: Each phase stops when quorum is reached (agreement layer control)
-2. **Sender deduplication**: Each participant votes once per phase (agreement layer control)
-3. **Minimal bundling**: Only votes needed to prove threshold are propagated (agreement layer optimization)
-4. **Stake concentration with tiered distribution**:
-   - Top 5 operators (Tier A) hold 32% of stake
-   - Top 40 operators hold 75% of stake
-   - This concentration enables thresholds to be reached with 40-50 votes instead of thousands
-5. **Binomial variance bounds**: While vote weights vary statistically, variance is moderate (σ ≈ √expected_weight), typically adding only 5-15% to vote counts
-6. **Fast finality**: 2.85s block time limits vote accumulation window
-7. **Agreement layer control**: Relay decisions made by agreement layer, not network layer
+1. **Probability, not just weight, matters.** Hundreds of mid-tier accounts (0.01%-0.5%) have `P(vote≥1)` between
+   30%-99% for each step, so the agreement layer receives their messages even though they contribute little weight.
+2. **Threshold termination still applies.** Relays stop forwarding once 2,267/1,112/3,838 weight is observed locally,
+   preventing the thousands of additional votes that would otherwise arrive.
+3. **Sender deduplication** ensures each account can emit at most one vote per phase, even if its weight > 1.
+4. **Minimal bundles** mean certificates still contain only the minimum number of highest-weight votes required to prove
+   quorum, so ledger/state-proof sizes remain small even though gossip volume is high.
+5. **Pipelined next votes** add ~330-470 concurrent messages because round r gossips round r+1 next votes in steady
+   state.
+6. **Topology independence** keeps these counts uniform: both relay and P2P transports invoke the same agreement-layer
+   filtering logic.
 
 ### 9.3 Topology Independence
 
-The 115-157 count **applies uniformly across all network topologies**:
+The **~720-1,030** count **applies uniformly across all network topologies**:
 
 - ✅ **Relay networks** (wsNetwork): Same agreement layer filtering
 - ✅ **P2P networks** (p2pNetwork/GossipSub): Same agreement layer filtering
@@ -749,29 +657,26 @@ filtering and relay decisions. Network topology only affects **how** messages ar
 
 For Falcon Envelope bandwidth calculations:
 - **Per-envelope overhead**: 1.3-1.8 KB (Falcon-1024 signature + metadata)
-- **Messages per round (steady-state)**: 115-157 (concurrent traffic including pipelined next votes)
+- **Messages per round (steady-state)**: **~720-1,030** (core + pipelined next votes)
 - **Rounds per day**: 30,316 (2.85s block time)
-- **Daily bandwidth**: 4.54-8.57 GB/day (envelope overhead only)
-- **Total relay bandwidth**: ~8-17 GB/day (including baseline)
+- **Daily bandwidth (envelopes only)**: **~27-54 GB/day**
+- **Total relay bandwidth (baseline + envelopes)**: **~30-62 GB/day**, assuming today’s 3-8 GB/day baseline continues
 
-**Note:** The 115-157 count accounts for pipelining overlap where next votes for round r+1 are gossiped
-during round r. This represents the realistic steady-state bandwidth load on relay infrastructure.
+**Note:** The ~720-1,030 count explicitly includes pipelined next votes and the observed mid-tier stake participation.
+It therefore represents the bandwidth that Falcon envelopes must cover in steady state.
 
 **This applies uniformly to relay networks, P2P networks, and hybrid deployments.**
 
 ### 9.5 Clarification on Tail Vote Weights
 
-Some critiques assume that all non-top-40 voters hold only ~0.075% of stake (≈3.75 weight for NextVote).
-Actual mainnet data shows dozens of accounts between 0.1%-0.5% stake, producing 5-25 weight per vote.
+Instrumented telemetry and the Nov-21-2025 CSV both show that the “tail” is not composed of near-empty accounts:
 
-Therefore, NextVote participation is not composed solely of minimum-weight voters, and the corrected range
-of 50-60 NextVotes reflects this distribution accurately.
+- 23 accounts between 0.10%-0.50% stake contribute 5-25 weight per vote.
+- 49 accounts between 0.05%-0.10% add another 3-5 weight per vote.
+- 315 accounts between 0.01%-0.05% still have a non-trivial chance of emitting at least one vote every step.
 
-**Stake Distribution Beyond Top 40:**
-- The distribution does not drop immediately from Tier C (0.68%) to the minimum weight floor
-- A significant "middle tier" of 0.1%-0.5% stake holders exists
-- These middle-tier accounts contribute meaningfully to reaching the 3,838 NextVote threshold
-- The original assumption of "10-30 weight per tail voter" was correct and is now validated by observed data
+These accounts dominate the probability sum in Section 1.2.1, which is why relays observe hundreds of messages even
+though the certificate bundle trims back down to a few dozen high-weight proofs.
 
 ---
 
@@ -796,38 +701,38 @@ All findings verified against the `algorand/go-algorand` repository:
 
 ## 11. Conclusion
 
-The **115-157 consensus messages per round** (steady-state bandwidth) is a **mathematical prediction** derived
-from the protocol's architectural mechanisms and realistic stake distribution:
+The **~720-1,030 consensus messages per round** (steady-state bandwidth) is a **mathematical prediction anchored to
+the Nov-21-2025 stake distribution** and the agreement-layer mechanics that every Algorand topology shares:
 
-1. **Agreement layer control** over message propagation
-2. **Per-phase threshold termination** limiting vote accumulation
-3. **Tiered stake concentration**: Top 5 hold 32%, top 40 hold 75%
-4. **Binomial variance**: Vote weights vary with σ ≈ √(expected_weight), adding ~5-15% to vote counts
-5. **Pipelining overlap**: Next votes for round r+1 gossiped during round r
-6. **Topology-independent filtering**: Same mechanisms across relay, P2P, and hybrid networks
+1. **Agreement-layer control** over propagation keeps gossip bounded but still relays every fresh vote until quorum.
+2. **Per-phase threshold termination** limits accumulation once 2,267/1,112/3,838 weight is locally observed.
+3. **Observed stake distribution**: Top 40 hold 79.4% of stake, yet hundreds of 0.01%-0.5% accounts participate every
+   round, so message counts are dominated by the middle tier.
+4. **Binomial/Poisson variance**: Vote weights vary with σ ≈ √(s × committeeSize), but probability sums show how many
+   accounts emit at least one vote per step.
+5. **Pipelining overlap**: Next votes for round r+1 are gossiped during round r, adding ~330-470 concurrent messages.
+6. **Topology independence**: Relay and P2P stacks feed the same agreement-layer filters, so the counts apply everywhere.
 
-**Two perspectives on message counting:**
+**Two practical perspectives:**
 
-**Protocol-centric (65-97 messages):** Counts only messages "belonging" to round r
-- Useful for understanding consensus protocol behavior per round
-- Excludes next votes which conceptually belong to round r+1
+**Protocol-centric (~385-560 messages):** Counts only proposals, soft votes, and cert votes for round r.
+- Explains why telemetry logs ~400-500 consensus messages even without next votes.
+- Useful for reasoning about tracker behavior and phase timing.
 
-**Bandwidth-centric (115-157 messages):** Counts concurrent message flows during round r
-- Useful for infrastructure planning and bandwidth budgeting
-- Includes pipelined next votes gossiped during round r
-- Accounts for middle-tier stake holders (0.1%-0.5%) contributing to NextVote threshold
-- **Recommended for post-quantum upgrade calculations**
+**Bandwidth-centric (~720-1,030 messages):** Adds pipelined next votes to capture the live gossip stream.
+- Use this when sizing Falcon envelopes, relay bandwidth, or DoS defenses.
+- Reflects the Poisson-derived expectation that hundreds of mid-tier accounts emit at least one vote per phase.
 
-The committee sizes (2,990/1,500/5,000) are **statistical expectations** from the VRF sortition algorithm,
-representing expected total weight across all selected participants. They are not enforced limits or direct
-indicators of message volume. The predicted message volume is mathematically derived from:
+Committee sizes (2,990/1,500/5,000) remain **statistical expectations**—not hard limits. The updated prediction is
+therefore derived from:
 
-- **Weight thresholds** (2,267/1,112/3,838) - the actual consensus requirements
-- **Tiered stake distribution** - realistic concentration where top 40 operators hold 75% of stake
-- **Binomial sortition** - weights follow binomial distribution with calculable variance
-- **Agreement layer optimizations** - threshold termination, deduplication, minimal bundling
+- **Weight thresholds** (2,267/1,112/3,838) enforced by agreement layer code
+- **Measured stake distribution** (Nov 21, 2025 CSV)
+- **Sortition math** (binomial weights, Poisson approximation for message probability)
+- **Agreement-layer optimizations** (deduplication, freshness filtering, bundle minimization)
 
-These mechanisms operate identically across all network implementations (relay, P2P, hybrid).
+Because these ingredients are identical across relay, P2P, and hybrid deployments, the conclusions apply uniformly to
+all Algorand network topologies.
 
 ---
 

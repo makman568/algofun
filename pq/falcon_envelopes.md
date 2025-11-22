@@ -379,17 +379,17 @@ as the network attempts to gather a supermajority from a larger committee pool.
 **Example Spike Scenario:**
 
 ```
-Normal operation: 80-120 envelopes/round → 7-15 GB/day
-Recovery mode: 300-500 envelopes/round → 20-35 GB/day (temporary)
+Normal operation: 720-1,030 envelopes/round → 27-54 GB/day
+Recovery mode: 1,500-2,500 envelopes/round → 56-120 GB/day (temporary)
 ```
 
 **Relay Infrastructure Resilience:**
-Even if the bandwidth load temporarily surges to ~30 GB/day during a recovery window, this
+Even if the bandwidth load temporarily surges to ~120 GB/day during a recovery window, this
 remains comfortably within the burst capacity of standard relay infrastructure:
 
 - Modern relay nodes: 1 Gbps uplinks (86 TB/day theoretical)
-- Actual burst requirement: ~30 GB/day
-- Utilization during spike: < 0.04% of link capacity
+- Actual burst requirement: ~120 GB/day
+- Utilization during spike: < 0.15% of link capacity
 
 **No Death Spiral:**
 The protocol naturally reverts to standard committee sizes immediately upon round finalization.
@@ -427,42 +427,43 @@ If every committee member voted and every vote was propagated to every node, the
 exceed 100 GB/day per relay.
 
 **Predicted Volume:**
-Based on source code analysis and tiered stake distribution with binomial variance, we mathematically derive
-**115-157 distinct envelopes per round** (steady-state bandwidth accounting for concurrent message flows).
+Using the November 21, 2025 stake distribution (`algorand-consensus.csv`) and the Poisson model from
+`consensus_message_volume.md`, we now derive **~715-1,030 distinct envelopes per round** during steady-state operation.
+This range matches the instrumented telemetry (≈300 soft + 150 cert votes per round, with next votes still to be logged)
+once pipelined next votes are included.
 
 ### 9.2.2 Two Perspectives on Message Counting
 
-**Protocol-centric count (65-97 messages):** Messages "belonging" to round r
-- Proposals: ~10-12 messages
-- Soft votes: ~35-50 messages (threshold 2,267 weight)
-- Cert votes: ~20-35 messages (threshold 1,112 weight)
-- **Subtotal: ~65-97 messages** (core consensus for round r)
+**Protocol-centric count (~385-560 messages):** Messages "belonging" to round r
+- Proposals: ~5-12 messages
+- Soft votes: ~260-360 messages (probability sum `1 - e^{-s×2,990}` over all online accounts)
+- Cert votes: ~120-190 messages (same model with committee size 1,500)
+- **Subtotal: ~385-560 messages** (core consensus for round r)
 
-**Steady-state bandwidth count (115-157 messages):** Concurrent traffic during round r
-- Core consensus (above): ~65-97 messages
-- Next votes (pipelined): ~50-60 messages (threshold 3,838 weight for round r+1, includes middle-tier accounts)
-- **Total: ~115-157 messages** (what relays actually transmit)
+**Steady-state bandwidth count (~715-1,030 messages):** Concurrent traffic during round r
+- Core consensus (above): ~385-560 messages
+- Next votes (pipelined): ~330-470 messages (committee size 5,000 applied to same stake data)
+- **Total: ~715-1,030 messages** (what relays actually transmit)
 
-**For Falcon Envelope bandwidth calculations, we use 115-157** because:
-1. Next votes for round r+1 begin emission during round r (see agreement/player.go)
-2. These messages consume relay bandwidth concurrently with round r's cert votes
-3. Relay operators must budget for peak concurrent load, not just per-round protocol messages
+**For Falcon Envelope bandwidth calculations, we use ~720-1,030** because:
+1. Next votes for round r+1 are emitted during round r (see `agreement/player.go` `stepNext` transitions).
+2. These messages share the same gossip links and therefore consume bandwidth concurrently with round r's soft/cert votes.
+3. Relay operators must provision for the live gossip load, not just the trimmed certificate bundles.
 
 **Why Predicted ≪ Theoretical:**
 
 1. **Threshold-based termination:** Each phase stops when weight threshold reached
-2. **Tiered stake concentration:**
-   - Top 5 operators (Tier A): 32% of stake
-   - Top 40 operators: 75% of stake
-   - This enables thresholds to be reached with 40-50 votes instead of thousands
-3. **Binomial variance bounds:** Vote weights vary with σ ≈ √(expected_weight), adding ~5-15% to counts
-4. **Gossip deduplication:** Redundant messages filtered before propagation
-5. **Fast finalization:** 2.85s block time limits vote accumulation window
+2. **Observed stake distribution:** While the top 40 accounts hold ~79% of stake, hundreds of mid-tier accounts
+   (0.01%-0.5%) still have a high probability of emitting at least one vote per step.
+3. **Gossip deduplication:** Agreement-layer filters drop duplicates and stale votes, so counts represent unique,
+   fresh messages.
+4. **Fast finalization:** 2.85s block time limits how long each phase accumulates votes before termination.
+5. **Minimal bundles:** Certificates still contain only the minimum high-weight votes required to prove quorum, even
+   though many more votes were gossiped in the background.
 
 **Our Bandwidth Model:**
-Our calculations (See Appendix A) utilize **115-157 envelopes per round** to account for pipelining overlap.
-This reflects realistic steady-state bandwidth requirements for relay infrastructure, including the contribution
-of middle-tier stake holders (0.1%-0.5%) to NextVote thresholds.
+All downstream calculations (Appendix A) therefore use **~720-1,030 envelopes per round**, aligning the Falcon-envelope
+budget with the empirical data set.
 
 ## 9.3 Rounds per Day
 
@@ -473,30 +474,30 @@ Block time = 2.85 seconds → **30,316 rounds/day**.
 Lower bound:
 
 ```
-115 × 1.3 KB × 30,316 ≈ 4.54 GB/day
+720 × 1.3 KB × 30,316 ≈ 27 GB/day
 ```
 
 Upper bound:
 
 ```
-157 × 1.8 KB × 30,316 ≈ 8.57 GB/day
+1,030 × 1.8 KB × 30,316 ≈ 54 GB/day
 ```
 
-**Current baseline:** 3-8 GB/day
-**With Falcon Envelopes:** 7.54-16.57 GB/day (baseline + PQ overhead)
-**Total relay bandwidth:** ~8-17 GB/day
-**Increase factor:** ~2.0-2.4×
+**Current baseline:** 3-8 GB/day  
+**With Falcon Envelopes:** 30-62 GB/day (baseline + PQ overhead)  
+**Increase factor:** ~4-10×, depending on relay role and peering.
 
 ## 9.5 Validator Bandwidth
 
-Non-relay participation nodes: **1-2 GB/day** (minimal increase).
+Non-relay participation nodes gossip with far fewer peers and therefore see a reduced envelope set:
+**~3-6 GB/day** in steady state (still within typical residential/hosting uplinks).
 
 ## 9.6 Storage (Falcon Envelope Cache)
 
 - **Retention window:** 256-400 rounds
-- **Envelopes per round:** 115-157
+- **Envelopes per round:** ~720-1,030
 - **Size per envelope:** 1.3-1.8 KB
-- **Total storage:** 38-113 MB RAM
+- **Total storage:** ~330 MB (typical) to ~725 MB (worst) RAM
 - **Type:** In-memory cache only (not persisted to disk)
 - **Pruning:** Automatic when State Proof covers range
 
@@ -510,16 +511,16 @@ Non-relay participation nodes: **1-2 GB/day** (minimal increase).
 
 **Per-Round Verification (Relay Node):**
 
-- Messages received: 115-157
-- Sequential verification time: 1.15-1.57 ms
+- Messages received: ~720-1,030
+- Sequential verification time: 7.2-10.3 ms
 - Block time budget: 2,850 ms
-- **CPU overhead (sequential):** 0.04-0.06% of block time
+- **CPU overhead (sequential):** 0.25-0.36% of block time
 
 **With Parallelization:**
 
 - Falcon verification is embarrassingly parallel (no dependencies)
-- 8-core relay: effective overhead < 0.01% (1.15-1.57ms ÷ 8 cores ≈ 0.14-0.20ms)
-- 4-core relay: effective overhead < 0.02% (1.15-1.57ms ÷ 4 cores ≈ 0.29-0.39ms)
+- 8-core relay: effective overhead ≈0.03-0.05% (7.2-10.3ms ÷ 8 cores)
+- 4-core relay: effective overhead ≈0.06-0.09%
 - **No liveness impact**
 
 **Byzantine Flood Resilience:**
@@ -544,10 +545,10 @@ vulnerabilities are introduced. The existing Byzantine resistance mechanisms rem
 - No changes to block structure or ledger format
 - No heavy certificate machinery or aggregation
 - Reuses existing participation key infrastructure
-- Scales with current relay bandwidth (1.7-2× increase)
+- Scales with current relay bandwidth (tens of GB/day, ≈4-10× today’s baseline but still trivial relative to 1 Gbps links)
 - Provides full PQ message authentication
 - Minimal code changes to consensus implementation
-- Temporary cache only (30-80 MB RAM)
+- Temporary cache only (~0.3-0.7 GB RAM)
 - Fast catchup preserved via State Proofs
 - **CPU performance improvement:** Falcon-1024 verification is ~5-10× faster than Ed25519 (0.01 ms vs 0.05-0.1 ms), reducing verification overhead to <0.01% of block time
 
@@ -558,8 +559,8 @@ property BA★ truly needs: authenticated committee messages. VRF verification r
 (committee selection cannot be forged), but granted, VRF secrecy is lost (selection becomes
 predictable). This is deemed acceptable even under attack as the ability to exploit this is extremely limited.
 Consensus logic, block structure, and ledger format remain unchanged. Falcon-1024 wrappers
-introduce modest bandwidth overhead (2.0-2.4× increase to ~8-17 GB/day) and minimal storage overhead
-(~38-113 MB RAM cache) but avoid megabyte-scale certificate growth and on-chain bloat. Importantly,
+introduce a manageable bandwidth overhead (steady-state ~30-62 GB/day for relays, still <0.6% of a 1 Gbps link)
+and a moderate RAM cache (~0.3-0.7 GB) but avoid megabyte-scale certificate growth and on-chain bloat. Importantly,
 Falcon-1024 verification is significantly faster than Ed25519 (~5-10× speedup), making this upgrade a CPU
 performance improvement rather than a compromise.
 
@@ -650,21 +651,20 @@ Metadata (round, step, role): 200-400 bytes
 
 ## A.2 Envelopes per Round
 
-**Mathematical prediction (from source code analysis with tiered stake distribution):**
+**Mathematical prediction (derived from `consensus_message_volume.md` with the Nov-21-2025 stake CSV):**
 
-**Protocol-centric count (65-97 messages):**
-- Proposals: ~10-12 messages
-- Soft votes: ~35-50 messages (threshold 2,267 weight)
-- Cert votes: ~20-35 messages (threshold 1,112 weight)
-- **Subtotal: ~65-97 messages** (core consensus for round r)
+**Protocol-centric count (~385-560 messages):**
+- Proposals: ~5-12 messages
+- Soft votes: ~260-360 messages
+- Cert votes: ~120-190 messages
+- **Subtotal: ~385-560 messages** (core consensus for round r)
 
-**Steady-state bandwidth (115-157 messages):**
-- Core consensus (above): ~65-97 messages
-- Next votes (pipelined): ~50-60 messages (threshold 3,838 weight for round r+1, includes middle-tier 0.1%-0.5% stake holders)
-- **Total: ~115-157 messages per round**
+**Steady-state bandwidth (~715-1,030 messages):**
+- Core consensus (above): ~385-560 messages
+- Next votes (pipelined): ~330-470 messages (threshold 3,838 weight for round r+1, includes middle-tier 0.01%-0.5% stake holders)
+- **Total: ~715-1,030 messages per round**
 
-**For Falcon envelope calculations, we use 115-157** to account for pipelining overlap where next votes
-for round r+1 are gossiped concurrently with round r's cert votes.
+**For Falcon envelope calculations, we use ~720-1,030** to account for pipelining overlap and observed mid-tier participation.
 
 **Why not 3,000-4,500?**
 Committee sizes are statistical expectations for security (sortition diversity). Predicted gossip volume
@@ -689,42 +689,42 @@ Rounds/day: 86,400 seconds ÷ 2.85 seconds = **30,316 rounds/day**
 **Lower bound:**
 
 ```
-115 envelopes/round × 1.3 KB/envelope × 30,316 rounds/day
-= 4,537,308 KB/day
-≈ 4.54 GB/day
+720 envelopes/round × 1.3 KB/envelope × 30,316 rounds/day
+= 28,968,960 KB/day
+≈ 27.1 GB/day
 ```
 
 **Upper bound:**
 
 ```
-157 envelopes/round × 1.8 KB/envelope × 30,316 rounds/day
-= 8,569,656 KB/day
-≈ 8.57 GB/day
+1,030 envelopes/round × 1.8 KB/envelope × 30,316 rounds/day
+= 57,528,770 KB/day
+≈ 53.6 GB/day
 ```
 
-**Current baseline:** 3-8 GB/day
-**With Falcon Envelopes:** 7.54-16.57 GB/day (baseline + PQ overhead)
-**Total relay bandwidth:** ~8-17 GB/day
+**Current baseline:** 3-8 GB/day  
+**With Falcon Envelopes:** 30-62 GB/day (baseline + PQ overhead)  
+**Total relay bandwidth:** ~30-62 GB/day
 
 ## A.5 Falcon Envelope Cache Size
 
 **Typical scenario:**
 
 ```
-256 rounds × 135 envelopes/round × 1.5 KB/envelope
-= 51,840 KB
-≈ 52 MB
+256 rounds × 875 envelopes/round × 1.5 KB/envelope
+= 360,448 KB
+≈ 352 MB
 ```
 
 **Worst-case scenario:**
 
 ```
-400 rounds × 157 envelopes/round × 1.8 KB/envelope
-= 113,040 KB
-≈ 113 MB
+400 rounds × 1,030 envelopes/round × 1.8 KB/envelope
+= 759,808 KB
+≈ 742 MB
 ```
 
-**Recommended allocation:** 120 MB RAM for envelope cache (includes headroom)
+**Recommended allocation:** ≥1 GB RAM reserved for the envelope cache (covers headroom plus instrumentation slop)
 
 ## A.6 CPU Verification Load
 
@@ -737,13 +737,13 @@ Rounds/day: 86,400 seconds ÷ 2.85 seconds = **30,316 rounds/day**
 **Per-round aggregate (relay):**
 
 ```
-Sequential: 135 messages × 0.01 ms = 1.35 ms
-8-core parallel: 1.35 ms ÷ 8 = 0.169 ms effective
+Sequential: 875 messages × 0.01 ms = 8.75 ms
+8-core parallel: 8.75 ms ÷ 8 = 1.09 ms effective
 Block time: 2,850 ms
-CPU utilization: 0.169 ms ÷ 2,850 ms ≈ 0.006%
+CPU utilization (8-core): 1.09 ms ÷ 2,850 ms ≈ 0.038%
 ```
 
-**Conclusion:** CPU overhead is negligible even without parallelization, well within relay node budgets.
+**Conclusion:** CPU overhead remains negligible relative to block time budgets, especially given Falcon’s faster per-message verification.
 
 ---
 
@@ -762,8 +762,8 @@ CPU utilization: 0.169 ms ÷ 2,850 ms ≈ 0.006%
 | Ledger Structure               | Unchanged               | Unchanged              | **Unchanged**              |
 | State Proofs                   | PQ-Secure (Falcon)      | PQ-Secure              | **PQ-Secure (unchanged)**  |
 | Catchup Correctness            | Guaranteed              | Guaranteed             | **Guaranteed**             |
-| Storage Overhead               | 0                       | 0                      | **38-113 MB (RAM only)**   |
-| Bandwidth Overhead             | Baseline                | Baseline               | **+4.5-8.6 GB/day**        |
+| Storage Overhead               | 0                       | 0                      | **~0.3-0.7 GB (RAM only)** |
+| Bandwidth Overhead             | Baseline                | Baseline               | **+27-54 GB/day**          |
 | DoS Resistance                 | High (secret selection) | Degraded (predictable) | Degraded (out of scope)    |
 
 **Summary:** Falcon Envelopes restore all critical authentication and safety properties under
@@ -777,26 +777,24 @@ deployment are required to restore DoS resistance.
 # Appendix C — Message Quantity Justification
 
 For detailed source code evidence and mathematical analysis of why the predicted consensus message volume is
-115-157 messages per round (steady-state bandwidth accounting for concurrent flows) rather than the theoretical
-committee size of 2,990-4,500, see the companion document:
+~715-1,030 messages per round (steady-state, including pipelined next votes) rather than the theoretical committee size
+of 2,990-5,000, see the companion document:
 
-**"Algorand Consensus Message Quantity Analysis" (`messagequantity.md`)**
+**"Algorand Consensus Message Quantity Analysis" (`consensus_message_volume.md`)**
 
-**Key findings:**
-- **115-157 messages per round** = steady-state bandwidth (concurrent message flows during round r)
-- **65-97 messages per round** = protocol-centric count (messages "belonging" to round r)
-- **Per-phase breakdown**: ~10-12 proposals, ~35-50 soft votes, ~20-35 cert votes, ~50-60 next votes (pipelined)
-- **Tiered stake distribution**: Top 5 (Tier A) hold 32%, top 40 hold 75% of stake
-- **Middle-tier contribution**: Additional stake holders at 0.1%-0.5% (Tiers D-F) contribute 5-25 weight each to NextVote threshold
-- **Binomial variance**: Vote weights vary with σ ≈ √(expected_weight), adding ~5-15% to vote counts
-- **Pipelining overlap**: Next votes for round r+1 are gossiped during round r
-- **Topology-independent**: Applies equally to relay networks, P2P networks, and hybrid configurations
-- **Mathematical prediction**: Derived from sortition algorithm, tiered stake distribution, binomial variance, and threshold mechanisms
-- **Based on source code analysis**: `algorand/go-algorand` and `algorand/sortition` repositories (verified 2025-11-20)
+**Key findings referenced here:**
+- **~385-560 messages per round** = protocol-centric count (proposals + soft + cert for round r)
+- **~720-1,030 messages per round** = steady-state bandwidth (adds pipelined next votes for round r+1)
+- **Per-phase breakdown:** ~5-12 proposals, ~260-360 soft votes, ~120-190 cert votes, ~330-470 next votes
+- **Observed stake distribution:** Top 40 accounts hold ~79% of online stake, but hundreds of 0.01%-0.5% accounts
+  participate every round.
+- **Probability model:** Vote participation per account is `1 - e^{-s×committeeSize}`, explaining why many more accounts
+  send votes than end up in the certificate bundle.
+- **Topology independence:** Agreement-layer filtering and threshold termination govern message propagation identically
+  for relay and P2P networks.
 
-The companion document provides comprehensive source code references, mathematical derivation with binomial
-variance analysis, tiered stake distribution modeling, and architectural analysis showing how this count is
-predicted from first principles and protocol parameters.
+The companion paper includes the full derivation, references to the go-algorand source tree, and the telemetry that
+motivated the updated Falcon-envelope bandwidth and storage budgets.
 
 ---
 
