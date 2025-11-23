@@ -427,25 +427,25 @@ If every committee member voted and every vote was propagated to every node, the
 exceed 100 GB/day per relay.
 
 **Predicted Volume:**
-Using the November 21, 2025 stake distribution (`algorand-consensus.csv`) and the Poisson model from
+Using the November 23, 2025 stake distribution (`algorand-consensus.csv`) and the Poisson model from
 `consensus_message_volume.md`, we now derive **~715-1,030 distinct envelopes per round** during steady-state operation.
 This range matches the instrumented telemetry (≈300 soft + 150 cert votes per round, with next votes still to be logged)
 once pipelined next votes are included.
 
 ### 9.2.2 Two Perspectives on Message Counting
 
-**Protocol-centric count (~385-560 messages):** Messages "belonging" to round r
+**Protocol-centric count (~390-575 messages):** Messages "belonging" to round r
 - Proposals: ~5-12 messages
 - Soft votes: ~260-360 messages (probability sum `1 - e^{-s×2,990}` over all online accounts)
 - Cert votes: ~120-190 messages (same model with committee size 1,500)
 - **Subtotal: ~385-560 messages** (core consensus for round r)
 
-**Steady-state bandwidth count (~715-1,030 messages):** Concurrent traffic during round r
+**Steady-state bandwidth count (~720-1,045 messages):** Concurrent traffic during round r
 - Core consensus (above): ~385-560 messages
 - Next votes (pipelined): ~330-470 messages (committee size 5,000 applied to same stake data)
 - **Total: ~715-1,030 messages** (what relays actually transmit)
 
-**For Falcon Envelope bandwidth calculations, we use ~720-1,030** because:
+**For Falcon Envelope bandwidth calculations, we use ~720-1,045** because:
 1. Next votes for round r+1 are emitted during round r (see `agreement/player.go` `stepNext` transitions).
 2. These messages share the same gossip links and therefore consume bandwidth concurrently with round r's soft/cert votes.
 3. Relay operators must provision for the live gossip load, not just the trimmed certificate bundles.
@@ -653,13 +653,13 @@ Metadata (round, step, role): 200-400 bytes
 
 **Mathematical prediction (derived from `consensus_message_volume.md` with the Nov-21-2025 stake CSV):**
 
-**Protocol-centric count (~385-560 messages):**
-- Proposals: ~5-12 messages
+**Protocol-centric count (~390-575 messages):**
+- Proposals: ~12-25 messages
 - Soft votes: ~260-360 messages
 - Cert votes: ~120-190 messages
 - **Subtotal: ~385-560 messages** (core consensus for round r)
 
-**Steady-state bandwidth (~715-1,030 messages):**
+**Steady-state bandwidth (~720-1,045 messages):**
 - Core consensus (above): ~385-560 messages
 - Next votes (pipelined): ~330-470 messages (threshold 3,838 weight for round r+1, includes middle-tier 0.01%-0.5% stake holders)
 - **Total: ~715-1,030 messages per round**
