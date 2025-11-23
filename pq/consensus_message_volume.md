@@ -8,8 +8,8 @@
 
 This document provides a **mathematical derivation** of expected consensus message volume based on source code
 parameters from the Algorand go-algorand repository and the **observed stake distribution on November 21, 2025**
-(`algorand-consensus.csv`). The updated analysis demonstrates that relays should expect **~400-550 core consensus
-messages per round** and **~720-1,030 concurrent gossip messages** once pipelined next votes are counted—still far
+(`algorand-consensus.csv`). The updated analysis demonstrates that relays should expect **~390-575 core consensus
+messages per round** and **~720-1,045 concurrent gossip messages** once pipelined next votes are counted—still far
 below the theoretical committee size of 2,990-5,000. The derivation remains **topology-independent**, applying
 equally to relay networks, P2P networks, and hybrid configurations.
 
@@ -21,17 +21,17 @@ equally to relay networks, P2P networks, and hybrid configurations.
 **Mathematical Prediction with Nov-21-2025 stake distribution:**
 
 **Protocol-centric count (messages "belonging" to round r):**
-- Proposals: ~5-12 messages (NumProposers=9 with mild over-selection)
+- Proposals: ~12-25 messages (NumProposers=20 since v10; dedup and priority filtering keep it slightly below the 20-ticket expectation)
 - Soft votes: **~260-360 unique voters** (Poisson selection over real stake fractions; telemetry shows 280-340)
 - Cert votes: **~120-190 unique voters** (lower threshold but similar selection dynamics; telemetry 130-165)
-- **Subtotal: ~385-560 messages** (core consensus for round r)
+- **Subtotal: ~390-575 messages** (core consensus for round r)
 
 **Steady-state bandwidth (concurrent flows during round r):**
-- Core consensus (above): ~385-560 messages
+- Core consensus (above): ~390-575 messages
 - Next votes (pipelined for round r+1): **~330-470 messages** (same stake data applied to the 5,000-size committee)
-- **Total concurrent: ~715-1,030 messages per round**
+- **Total concurrent: ~720-1,045 messages per round**
 
-**For bandwidth calculations:** Use **~720-1,030 messages/round** to capture pipelining overlap and next-vote traffic.
+**For bandwidth calculations:** Use **~720-1,045 messages/round** to capture pipelining overlap and next-vote traffic.
 
 **Note on binomial/Poisson variance:** For each account with stake fraction `s`, the number of VRF “wins” per step
 follows a binomial distribution with mean `s × committeeSize` and σ ≈ √(s × committeeSize). The probability that an
@@ -45,7 +45,7 @@ expectation explains the ±10% swing seen in telemetry.
 
 ### 1.1 Committee Sizes and Thresholds
 
-**File: `config/consensus.go:868-879`**
+**File: `config/consensus.go:832-907`**
 
 ```go
 v8.NumProposers = 9
@@ -61,7 +61,21 @@ v8.RedoCommitteeSize = 5000
 v8.RedoCommitteeThreshold = 3838   // 77% of committee
 v8.DownCommitteeSize = 5000
 v8.DownCommitteeThreshold = 3838   // 77% of committee
+
+// v10 introduces fast partition recovery (and also raises NumProposers).
+v10 := v9
+v10.NumProposers = 20
+v10.LateCommitteeSize = 500
+v10.LateCommitteeThreshold = 320
+v10.RedoCommitteeSize = 2400
+v10.RedoCommitteeThreshold = 1768
+v10.DownCommitteeSize = 6000
+v10.DownCommitteeThreshold = 4560
 ```
+
+Protocol versions **v10 and above therefore run with `NumProposers = 20`**, and `protocol.ConsensusCurrentVersion`
+(`ConsensusV41` at the time of writing) inherits those parameters. Earlier versions (v8/v9) used 9 proposers, which is
+why some historical material still cites the lower count.
 
 **Important: Committee Sizes Are Probabilistic Expectations**
 
@@ -93,8 +107,8 @@ quorum is detected.
 In a **successful, non-contentious round**, consensus proceeds through these phases:
 
 #### Phase 1: Proposal Phase
-- **Theoretical committee**: 9 proposers selected via VRF sortition
-- **Predicted messages**: ~5-12 proposals (slight over-selection plus duplicates suppressed by the proposal tracker)
+- **Theoretical committee**: 20 proposers selected via VRF sortition (NumProposers=20 for all v10+ networks)
+- **Predicted messages**: ~12-25 proposals (Poisson expectation is ~20 unique proposers; tracker deduplication and priority filtering trim the tail but relays every fresh proposal until the highest-priority payload is known)
 - **Behavior**: All valid proposals are propagated so the network can converge on the highest-priority proposal
 
 #### Phase 2: Soft Vote Phase
@@ -158,21 +172,21 @@ threshold termination (which stops propagation before all expected voters appear
 
 **Protocol-centric view (messages "belonging" to round r):**
 ```
-Proposals:    ~5-12 messages
+Proposals:    ~12-25 messages
 Soft votes:   ~260-360 messages
 Cert votes:   ~120-190 messages
 -------------------------------
-SUBTOTAL:     ~385-560 messages (core consensus)
+SUBTOTAL:     ~390-575 messages (core consensus)
 ```
 
 **Steady-state bandwidth view (concurrent traffic during round r):**
 ```
-Core consensus:  ~385-560 messages
+Core consensus:  ~390-575 messages
 Next votes:      ~330-470 messages (pipelined for round r+1)
 ------------------------------------------------------------
-TOTAL:           ~715-1,030 messages per round
+TOTAL:           ~720-1,045 messages per round
 
-For bandwidth calculations, budget for ~720-1,030 messages/round
+For bandwidth calculations, budget for ~720-1,045 messages/round
 to include pipelined next votes and variance.
 ```
 
@@ -601,18 +615,18 @@ period, step).
 
 | Phase | Expected Weight* | Weight Threshold | Predicted Messages** | Notes |
 |-------|-----------------|------------------|----------------------|-------|
-| Proposals | 9 | N/A | ~5-12 | NumProposers = 9 (slight over-selection) |
+| Proposals | 20 | N/A | ~12-25 | NumProposers = 20 (slight over-selection with dedup) |
 | Soft votes | 2,990 | 2,267 (76%) | **~260-360** | Sum of `1 - e^{-s×2,990}` over CSV stake fractions; telemetry 280-340 |
 | Cert votes | 1,500 | 1,112 (74%) | **~120-190** | Sum of `1 - e^{-s×1,500}`; telemetry 130-165 |
-| **Core Total** | **~4,500** | **N/A** | **~385-560** | Messages for round r |
+| **Core Total** | **~4,500** | **N/A** | **~390-575** | Messages for round r |
 
 **Steady-state bandwidth** (concurrent message flows during round r):
 
 | Phase | Expected Weight* | Weight Threshold | Predicted Messages** | Notes |
 |-------|-----------------|------------------|----------------------|-------|
-| Core consensus | (above) | (above) | **~385-560** | Proposals + soft + cert |
+| Core consensus | (above) | (above) | **~390-575** | Proposals + soft + cert |
 | Next votes | 5,000 | 3,838 (77%) | **~330-470** | Pipelined for round r+1, derived from same CSV |
-| **Bandwidth Total** | **~9,500** | **N/A** | **~715-1,030** | Concurrent traffic |
+| **Bandwidth Total** | **~9,500** | **N/A** | **~720-1,045** | Concurrent traffic |
 
 *Expected Weight = statistical expectation from sortition (not an enforced maximum; actual weight varies per round).
 
@@ -620,11 +634,11 @@ period, step).
 on **November 21, 2025** (see Section 6). The ranges encompass ±10% variance from sortition randomness and threshold
 termination.
 
-**For bandwidth modeling: budget ~720-1,030 messages/round.**
+**For bandwidth modeling: budget ~720-1,045 messages/round.**
 
-**For protocol analysis: core consensus emits ~385-560 messages/round before next votes.**
+**For protocol analysis: core consensus emits ~390-575 messages/round before next votes.**
 
-### 9.2 Why ~720-1,030, Not 9,500?
+### 9.2 Why ~720-1,045, Not 9,500?
 
 The derived count is still >90% below the theoretical committee size because:
 
@@ -642,7 +656,7 @@ The derived count is still >90% below the theoretical committee size because:
 
 ### 9.3 Topology Independence
 
-The **~720-1,030** count **applies uniformly across all network topologies**:
+The **~720-1,045** count **applies uniformly across all network topologies**:
 
 - ✅ **Relay networks** (wsNetwork): Same agreement layer filtering
 - ✅ **P2P networks** (p2pNetwork/GossipSub): Same agreement layer filtering
@@ -657,12 +671,12 @@ filtering and relay decisions. Network topology only affects **how** messages ar
 
 For Falcon Envelope bandwidth calculations:
 - **Per-envelope overhead**: 1.3-1.8 KB (Falcon-1024 signature + metadata)
-- **Messages per round (steady-state)**: **~720-1,030** (core + pipelined next votes)
+- **Messages per round (steady-state)**: **~720-1,045** (core + pipelined next votes)
 - **Rounds per day**: 30,316 (2.85s block time)
 - **Daily bandwidth (envelopes only)**: **~27-54 GB/day**
 - **Total relay bandwidth (baseline + envelopes)**: **~30-62 GB/day**, assuming today’s 3-8 GB/day baseline continues
 
-**Note:** The ~720-1,030 count explicitly includes pipelined next votes and the observed mid-tier stake participation.
+**Note:** The ~720-1,045 count explicitly includes pipelined next votes and the observed mid-tier stake participation.
 It therefore represents the bandwidth that Falcon envelopes must cover in steady state.
 
 **This applies uniformly to relay networks, P2P networks, and hybrid deployments.**
@@ -701,7 +715,7 @@ All findings verified against the `algorand/go-algorand` repository:
 
 ## 11. Conclusion
 
-The **~720-1,030 consensus messages per round** (steady-state bandwidth) is a **mathematical prediction anchored to
+The **~720-1,045 consensus messages per round** (steady-state bandwidth) is a **mathematical prediction anchored to
 the Nov-21-2025 stake distribution** and the agreement-layer mechanics that every Algorand topology shares:
 
 1. **Agreement-layer control** over propagation keeps gossip bounded but still relays every fresh vote until quorum.
@@ -715,11 +729,11 @@ the Nov-21-2025 stake distribution** and the agreement-layer mechanics that ever
 
 **Two practical perspectives:**
 
-**Protocol-centric (~385-560 messages):** Counts only proposals, soft votes, and cert votes for round r.
+**Protocol-centric (~390-575 messages):** Counts only proposals, soft votes, and cert votes for round r.
 - Explains why telemetry logs ~400-500 consensus messages even without next votes.
 - Useful for reasoning about tracker behavior and phase timing.
 
-**Bandwidth-centric (~720-1,030 messages):** Adds pipelined next votes to capture the live gossip stream.
+**Bandwidth-centric (~720-1,045 messages):** Adds pipelined next votes to capture the live gossip stream.
 - Use this when sizing Falcon envelopes, relay bandwidth, or DoS defenses.
 - Reflects the Poisson-derived expectation that hundreds of mid-tier accounts emit at least one vote per phase.
 
