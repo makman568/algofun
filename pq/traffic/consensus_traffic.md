@@ -111,6 +111,8 @@ In a **successful, non-contentious round**, consensus proceeds through these pha
 - **Predicted messages**: ~12-25 proposals (Poisson expectation is ~20 unique proposers; tracker deduplication and priority filtering trim the tail but relays every fresh proposal until the highest-priority payload is known)
 - **Behavior**: All valid proposals are propagated so the network can converge on the highest-priority proposal
 
+**Note:** The 12-25 proposal range reflects the theoretical committee size derived from the proposer selection function and is intentionally conservative. In practice, empirical telemetry typically shows fewer observed proposals per round (often ~4-11), due to early soft-vote quorum being reached. Once the soft threshold is met, proposal propagation is no longer necessary for the current round, and late-arriving proposals are suppressed or discarded by the network. This optimization reduces the observed proposal count but does not alter the underlying committee model (see `traffic/support/proposals_discrepancy.md`).
+
 #### Phase 2: Soft Vote Phase
 - **Expected total committee weight**: 2,990
 - **Weight threshold required**: 2,267 (76% of expected weight)
