@@ -1,0 +1,661 @@
+diff --git a/agreement/consensus_logger.go b/agreement/consensus_logger.go
+index ab958e213..39d0d3329 100644
+--- a/agreement/consensus_logger.go
++++ b/agreement/consensus_logger.go
+@@ -17,10 +17,14 @@
+ package agreement
+ 
+ import (
++	"bufio"
+ 	"fmt"
++	"io"
+ 	"os"
+ 	"path/filepath"
++	"strings"
+ 	"sync"
++	"time"
+ 
+ 	"github.com/algorand/go-algorand/data/basics"
+ 	"github.com/algorand/go-algorand/logging"
+@@ -33,26 +37,58 @@ const (
+ 	msgSoftVote
+ 	msgCertVote
+ 	msgNextVote
++	msgPipelinedSoftVote
++	msgPipelinedCertVote
++	msgObsoleteVote
+ )
+ 
++const (
++	consensusCSVHeader         = "round,proposals,soft_votes,cert_votes,next_votes,pipelined_soft_votes,pipelined_cert_votes,obsolete_votes,round_duration_ms,in_peers,out_peers,bundle_votes"
++	consensusCSVHeaderLegacyV3 = "round,proposals,soft_votes,cert_votes,next_votes,pipelined_soft_votes,pipelined_cert_votes,round_duration_ms,in_peers,out_peers,bundle_votes"
++	consensusCSVHeaderLegacyV1 = "round,proposals,soft_votes,cert_votes,next_votes"
++	consensusCSVHeaderLegacyV2 = "round,proposals,soft_votes,cert_votes,next_votes,round_duration_ms,in_peers,out_peers,bundle_votes"
++)
++
++// PeerCountProvider returns the current inbound/outbound peer totals.
++type PeerCountProvider func() (inPeers uint64, outPeers uint64)
++
+ type roundCounts struct {
+ 	proposals uint64
+ 	soft      uint64
+ 	cert      uint64
+ 	next      uint64
++
++	// pipelined votes are for r+1, observed during r
++	pipelinedSoft uint64
++	pipelinedCert uint64
++	obsolete      uint64
++	obsoleteSet   map[basics.Address]struct{}
++
++	roundStart     time.Time
++	durationMillis uint64
++	inPeers        uint64
++	outPeers       uint64
++	bundleVotes    uint64
+ }
+ 
+ type consensusMessageLogger struct {
+ 	mu            sync.Mutex
+ 	path          string
++	debugPath     string
+ 	headerWritten bool
++	debugHeader   bool
+ 	counts        map[uint64]*roundCounts
++	pendingFlush  map[uint64]*roundCounts
+ 	lastFlushed   uint64
++	prevRound     uint64
++	peerProvider  PeerCountProvider
+ }
+ 
+ var (
+-	consensusLoggerOnce sync.Once
+-	consensusLogger     *consensusMessageLogger
++	consensusLoggerOnce     sync.Once
++	consensusLogger         *consensusMessageLogger
++	consensusPeerProvider   PeerCountProvider
++	consensusPeerProviderMu sync.Mutex
+ )
+ 
+ // InitConsensusMessageLogger configures a CSV logger that records per-round consensus message totals.
+@@ -63,9 +99,14 @@ func InitConsensusMessageLogger(dataDir string) {
+ 	consensusLoggerOnce.Do(func() {
+ 		path := filepath.Join(dataDir, "consensus_messages.csv")
+ 		consensusLogger = &consensusMessageLogger{
+-			path:   path,
+-			counts: make(map[uint64]*roundCounts),
++			path:         path,
++			counts:       make(map[uint64]*roundCounts),
++			pendingFlush: make(map[uint64]*roundCounts),
+ 		}
++		consensusPeerProviderMu.Lock()
++		provider := consensusPeerProvider
++		consensusPeerProviderMu.Unlock()
++		consensusLogger.setPeerProvider(provider)
+ 		if err := consensusLogger.ensureHeader(); err != nil {
+ 			logging.Base().Warnf("consensus logger disabled: %v", err)
+ 			consensusLogger = nil
+@@ -73,6 +114,27 @@ func InitConsensusMessageLogger(dataDir string) {
+ 	})
+ }
+ 
++// SetConsensusPeerProvider configures a callback used to fetch peer counts when a
++// round certifies.
++func SetConsensusPeerProvider(provider PeerCountProvider) {
++	consensusPeerProviderMu.Lock()
++	consensusPeerProvider = provider
++	logger := consensusLogger
++	consensusPeerProviderMu.Unlock()
++	if logger != nil {
++		logger.setPeerProvider(provider)
++	}
++}
++
++func (l *consensusMessageLogger) setPeerProvider(provider PeerCountProvider) {
++	if l == nil {
++		return
++	}
++	l.mu.Lock()
++	defer l.mu.Unlock()
++	l.peerProvider = provider
++}
++
+ func recordConsensusProposal(round basics.Round) {
+ 	if consensusLogger == nil {
+ 		return
+@@ -80,47 +142,68 @@ func recordConsensusProposal(round basics.Round) {
+ 	consensusLogger.record(uint64(round), msgProposal)
+ }
+ 
+-func recordConsensusVote(round basics.Round, s step) {
++func recordRoundStart(round basics.Round) {
++	if consensusLogger == nil {
++		return
++	}
++	consensusLogger.recordRoundStart(uint64(round))
++}
++
++func recordConsensusVote(playerRound basics.Round, vote rawVote) {
+ 	if consensusLogger == nil {
+ 		return
+ 	}
++
+ 	var kind messageKind
+-	switch s {
+-	case soft:
++
++	switch {
++	case vote.Step == soft:
+ 		kind = msgSoftVote
+-	case cert:
++	case vote.Step == cert:
+ 		kind = msgCertVote
+-	case next:
++	case vote.Step >= next:
+ 		kind = msgNextVote
+ 	default:
+ 		return
+ 	}
+-	consensusLogger.record(uint64(round), kind)
++
++	consensusLogger.record(uint64(vote.Round), kind)
++
++	if playerRound != 0 && vote.Round > playerRound {
++		consensusLogger.logPipelinedObservation(playerRound, vote, kind)
++		switch kind {
++		case msgSoftVote:
++			consensusLogger.record(uint64(playerRound), msgPipelinedSoftVote)
++		case msgCertVote:
++			consensusLogger.record(uint64(playerRound), msgPipelinedCertVote)
++		}
++	}
+ }
+ 
+-func recordRoundCertification(round basics.Round) {
++func recordRoundCertification(round basics.Round, bundleVotes uint64) {
+ 	if consensusLogger == nil {
+ 		return
+ 	}
+-	if err := consensusLogger.flush(uint64(round)); err != nil {
+-		logging.Base().Warnf("consensus logger flush failed for round %d: %v", round, err)
++	consensusLogger.recordCertification(uint64(round), bundleVotes)
++}
++
++func recordObsoleteVote(round basics.Round, sender basics.Address) {
++	if consensusLogger == nil {
++		return
+ 	}
++	if round == 0 {
++		return
++	}
++	consensusLogger.recordObsolete(uint64(round), sender)
+ }
+ 
+ func (l *consensusMessageLogger) record(round uint64, kind messageKind) {
+ 	l.mu.Lock()
+ 	defer l.mu.Unlock()
+ 
+-	if round != 0 && round <= l.lastFlushed {
+-		if _, ok := l.counts[round]; !ok {
+-			return
+-		}
+-	}
+-
+-	rc := l.counts[round]
++	rc := l.ensureRound(round)
+ 	if rc == nil {
+-		rc = &roundCounts{}
+-		l.counts[round] = rc
++		return
+ 	}
+ 
+ 	switch kind {
+@@ -132,7 +215,68 @@ func (l *consensusMessageLogger) record(round uint64, kind messageKind) {
+ 		rc.cert++
+ 	case msgNextVote:
+ 		rc.next++
++	case msgPipelinedSoftVote:
++		rc.pipelinedSoft++
++	case msgPipelinedCertVote:
++		rc.pipelinedCert++
++	}
++}
++
++func (l *consensusMessageLogger) recordObsolete(round uint64, sender basics.Address) {
++	l.mu.Lock()
++	defer l.mu.Unlock()
++
++	rc := l.ensureRound(round)
++	if rc == nil {
++		return
++	}
++	if rc.obsoleteSet == nil {
++		rc.obsoleteSet = make(map[basics.Address]struct{})
++	}
++	if _, ok := rc.obsoleteSet[sender]; ok {
++		return
++	}
++	rc.obsoleteSet[sender] = struct{}{}
++	rc.obsolete++
++}
++
++func (l *consensusMessageLogger) ensureRound(round uint64) *roundCounts {
++	if round != 0 && round <= l.lastFlushed {
++		rc, ok := l.counts[round]
++		if !ok {
++			return nil
++		}
++		return rc
++	}
++	rc := l.counts[round]
++	if rc == nil {
++		rc = &roundCounts{}
++		l.counts[round] = rc
++	}
++	return rc
++}
++
++func (l *consensusMessageLogger) recordRoundStart(round uint64) {
++	if l == nil {
++		return
++	}
++	l.mu.Lock()
++	rc := l.ensureRound(round)
++	if rc != nil && rc.roundStart.IsZero() {
++		rc.roundStart = time.Now()
+ 	}
++	l.mu.Unlock()
++	l.flushPendingBefore(round)
++}
++
++func (l *consensusMessageLogger) recordCertification(round uint64, bundleVotes uint64) {
++	l.mu.Lock()
++	rc := l.ensureRound(round)
++	if rc != nil {
++		rc.bundleVotes = bundleVotes
++		l.pendingFlush[round] = rc
++	}
++	l.mu.Unlock()
+ }
+ 
+ func (l *consensusMessageLogger) flush(round uint64) error {
+@@ -143,12 +287,32 @@ func (l *consensusMessageLogger) flush(round uint64) error {
+ 		return err
+ 	}
+ 
++	delete(l.pendingFlush, round)
++
+ 	rc, ok := l.counts[round]
+ 	if !ok {
+ 		rc = &roundCounts{}
+ 	}
+ 
+-	line := fmt.Sprintf("%d,%d,%d,%d,%d\n", round, rc.proposals, rc.soft, rc.cert, rc.next)
++	durationMs := rc.durationMillis
++	if durationMs == 0 && !rc.roundStart.IsZero() {
++		delta := time.Since(rc.roundStart)
++		if delta > 0 {
++			durationMs = uint64(delta / time.Millisecond)
++		}
++	}
++	rc.durationMillis = durationMs
++
++	inPeers := rc.inPeers
++	outPeers := rc.outPeers
++	if l.peerProvider != nil {
++		inPeers, outPeers = l.peerProvider()
++		rc.inPeers = inPeers
++		rc.outPeers = outPeers
++	}
++
++	line := fmt.Sprintf("%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", round, rc.proposals, rc.soft, rc.cert, rc.next, rc.pipelinedSoft, rc.pipelinedCert, rc.obsolete, durationMs, inPeers, outPeers, rc.bundleVotes)
++
+ 	file, err := os.OpenFile(l.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+ 	if err != nil {
+ 		return err
+@@ -163,11 +327,34 @@ func (l *consensusMessageLogger) flush(round uint64) error {
+ 
+ 	delete(l.counts, round)
+ 	if round > l.lastFlushed {
++		if l.prevRound != 0 && l.prevRound != l.lastFlushed {
++			delete(l.counts, l.prevRound)
++		}
++		l.prevRound = l.lastFlushed
+ 		l.lastFlushed = round
+ 	}
+ 	return nil
+ }
+ 
++func (l *consensusMessageLogger) flushPendingBefore(round uint64) {
++	if l == nil {
++		return
++	}
++	var targets []uint64
++	l.mu.Lock()
++	for r := range l.pendingFlush {
++		if r < round {
++			targets = append(targets, r)
++		}
++	}
++	l.mu.Unlock()
++	for _, r := range targets {
++		if err := l.flush(r); err != nil {
++			logging.Base().Warnf("consensus logger flush failed for round %d: %v", r, err)
++		}
++	}
++}
++
+ func (l *consensusMessageLogger) ensureHeader() error {
+ 	l.mu.Lock()
+ 	defer l.mu.Unlock()
+@@ -189,11 +376,189 @@ func (l *consensusMessageLogger) ensureHeaderLocked() error {
+ 		return statErr
+ 	}
+ 	if info.Size() == 0 {
+-		if _, err = file.WriteString("round,proposals,soft_votes,cert_votes,next_votes\n"); err != nil {
++		if _, err = file.WriteString(consensusCSVHeader + "\n"); err != nil {
+ 			_ = file.Close()
+ 			return err
+ 		}
++	} else {
++		reader := bufio.NewReader(file)
++		headerLine, readErr := reader.ReadString('\n')
++		if readErr != nil && readErr != io.EOF {
++			_ = file.Close()
++			return readErr
++		}
++		headerLine = strings.TrimRight(headerLine, "\r\n")
++		switch headerLine {
++		case consensusCSVHeader:
++			// already upgraded
++		case consensusCSVHeaderLegacyV3:
++			_ = file.Close()
++			if err := upgradeLegacyConsensusLog(l.path, convertLegacyV3Line); err != nil {
++				return err
++			}
++			l.headerWritten = true
++			return nil
++		case consensusCSVHeaderLegacyV2:
++			_ = file.Close()
++			if err := upgradeLegacyConsensusLog(l.path, convertLegacyV2Line); err != nil {
++				return err
++			}
++			l.headerWritten = true
++			return nil
++		case consensusCSVHeaderLegacyV1:
++			_ = file.Close()
++			if err := upgradeLegacyConsensusLog(l.path, convertLegacyV1Line); err != nil {
++				return err
++			}
++			l.headerWritten = true
++			return nil
++		default:
++			_ = file.Close()
++			return fmt.Errorf("unexpected consensus_messages.csv header: %q", headerLine)
++		}
+ 	}
+ 	l.headerWritten = true
+ 	return file.Close()
+ }
++
++func (l *consensusMessageLogger) logPipelinedObservation(playerRound basics.Round, vote rawVote, kind messageKind) {
++	l.mu.Lock()
++	defer l.mu.Unlock()
++
++	if l.debugPath == "" {
++		dir := filepath.Dir(l.path)
++		l.debugPath = filepath.Join(dir, "consensus_pipelined_debug.csv")
++	}
++
++	file, err := os.OpenFile(l.debugPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
++	if err != nil {
++		logging.Base().Warnf("consensus logger failed to open pipelined debug file: %v", err)
++		return
++	}
++	if !l.debugHeader {
++		if _, err := file.WriteString("player_round,vote_round,vote_period,vote_step,message_kind\n"); err != nil {
++			_ = file.Close()
++			logging.Base().Warnf("consensus logger failed writing pipelined debug header: %v", err)
++			return
++		}
++		l.debugHeader = true
++	}
++	line := fmt.Sprintf("%d,%d,%d,%d,%d\n", uint64(playerRound), vote.Round, vote.Period, vote.Step, kind)
++	if _, err := file.WriteString(line); err != nil {
++		logging.Base().Warnf("consensus logger failed writing pipelined debug line: %v", err)
++	}
++	_ = file.Close()
++}
++
++type legacyLineConverter func([]string) ([]string, error)
++
++func upgradeLegacyConsensusLog(path string, converter legacyLineConverter) error {
++	src, err := os.Open(path)
++	if err != nil {
++		return err
++	}
++	defer src.Close()
++
++	tmp, err := os.CreateTemp(filepath.Dir(path), "consensus_messages_*.tmp")
++	if err != nil {
++		return err
++	}
++	tmpName := tmp.Name()
++	defer func() {
++		if tmpName != "" {
++			_ = os.Remove(tmpName)
++		}
++	}()
++
++	scanner := bufio.NewScanner(src)
++	// consume legacy header if present
++	if scanner.Scan() {
++		// ignore -- we already detected legacy header
++	}
++	if err := scanner.Err(); err != nil {
++		_ = tmp.Close()
++		return err
++	}
++	writer := bufio.NewWriter(tmp)
++	if _, err := writer.WriteString(consensusCSVHeader + "\n"); err != nil {
++		_ = writer.Flush()
++		_ = tmp.Close()
++		return err
++	}
++	for scanner.Scan() {
++		line := scanner.Text()
++		if strings.TrimSpace(line) == "" {
++			if _, err := writer.WriteString("\n"); err != nil {
++				_ = writer.Flush()
++				_ = tmp.Close()
++				return err
++			}
++			continue
++		}
++		line = strings.TrimRight(line, "\r")
++		fields := strings.Split(line, ",")
++		converted, err := converter(fields)
++		if err != nil {
++			_ = writer.Flush()
++			_ = tmp.Close()
++			return err
++		}
++		if _, err := writer.WriteString(strings.Join(converted, ",") + "\n"); err != nil {
++			_ = writer.Flush()
++			_ = tmp.Close()
++			return err
++		}
++	}
++	if err := scanner.Err(); err != nil {
++		_ = writer.Flush()
++		_ = tmp.Close()
++		return err
++	}
++	if err := writer.Flush(); err != nil {
++		_ = tmp.Close()
++		return err
++	}
++	if err := tmp.Close(); err != nil {
++		return err
++	}
++	if err := src.Close(); err != nil {
++		return err
++	}
++	if err := os.Rename(tmpName, path); err != nil {
++		return err
++	}
++	tmpName = ""
++	return os.Chmod(path, 0o644)
++}
++
++func convertLegacyV3Line(fields []string) ([]string, error) {
++	for len(fields) < 11 {
++		fields = append(fields, "")
++	}
++	out := make([]string, 0, 12)
++	out = append(out, fields[:7]...)
++	out = append(out, "")
++	out = append(out, fields[7:]...)
++	return out, nil
++}
++
++func convertLegacyV2Line(fields []string) ([]string, error) {
++	for len(fields) < 9 {
++		fields = append(fields, "")
++	}
++	out := make([]string, 0, 12)
++	out = append(out, fields[:5]...)
++	out = append(out, "", "", "")
++	out = append(out, fields[5:]...)
++	return out, nil
++}
++
++func convertLegacyV1Line(fields []string) ([]string, error) {
++	for len(fields) < 5 {
++		fields = append(fields, "")
++	}
++	out := make([]string, 0, 12)
++	out = append(out, fields[:5]...)
++	out = append(out, "", "", "", "", "", "", "")
++	return out, nil
++}
+diff --git a/agreement/player.go b/agreement/player.go
+index 6336df982..e6e5b2928 100644
+--- a/agreement/player.go
++++ b/agreement/player.go
+@@ -352,6 +352,8 @@ func (p *player) handleThresholdEvent(r routerHandle, e thresholdEvent) []action
+ 	var actions []action
+ 	switch e.t() {
+ 	case certThreshold:
++		bundleVotes := len(e.Bundle.Votes) + len(e.Bundle.EquivocationVotes)
++		recordRoundCertification(e.Round, uint64(bundleVotes))
+ 		// for future periods, fast-forwarding below will ensure correct staging
+ 		// for past periods, having a freshest certThreshold will prevent losing the block
+ 		r.dispatch(*p, e, proposalMachine, 0, 0, 0)
+@@ -466,6 +468,7 @@ func (p *player) enterRound(r routerHandle, source event, target round) []action
+ 	p.Step = soft
+ 	p.Napping = false
+ 	p.FastRecoveryDeadline = 0 // set immediately
++	recordRoundStart(p.Round)
+ 
+ 	switch source := source.(type) {
+ 	case roundInterruptionEvent:
+diff --git a/agreement/proposalTracker.go b/agreement/proposalTracker.go
+index 0b23f198b..9f7e7bd8c 100644
+--- a/agreement/proposalTracker.go
++++ b/agreement/proposalTracker.go
+@@ -167,6 +167,8 @@ func (t *proposalTracker) handle(r routerHandle, p player, e event) event {
+ 		}
+ 		t.Duplicate[v.R.Sender] = true
+ 
++		recordConsensusProposal(v.R.Round)
++
+ 		newFreezer, effect, err := t.Freezer.accept(v)
+ 		t.Freezer.copyLateCredentialTrackingState(newFreezer)
+ 		if t.Staging != bottom {
+diff --git a/agreement/voteAggregator.go b/agreement/voteAggregator.go
+index fc60d4ce6..7668d7381 100644
+--- a/agreement/voteAggregator.go
++++ b/agreement/voteAggregator.go
+@@ -109,6 +109,7 @@ func (agg *voteAggregator) handle(r routerHandle, pr player, em event) (res even
+ 		if err != nil {
+ 			return filteredEvent{T: voteFiltered, Err: makeSerErr(err)}
+ 		}
++		recordConsensusVote(e.FreshnessData.PlayerRound, v.R)
+ 		if v.R.Round == pr.Round {
+ 			r.t.timeR().RecVoteReceived(v)
+ 		} else if v.R.Round == pr.Round+1 {
+@@ -196,6 +197,9 @@ func (agg *voteAggregator) handle(r routerHandle, pr player, em event) (res even
+ func (agg *voteAggregator) filterVote(proto protocol.ConsensusVersion, p player, r routerHandle, uv unauthenticatedVote, freshData freshnessData) error {
+ 	err := voteFresh(proto, freshData, uv)
+ 	if err != nil {
++		if isObsoleteVote(freshData, uv) {
++			recordObsoleteVote(freshData.PlayerRound, uv.R.Sender)
++		}
+ 		return fmt.Errorf("voteAggregator: rejected vote due to age: %v", err)
+ 	}
+ 	filterReq := voteFilterRequestEvent{RawVote: uv.R}
+@@ -278,6 +282,23 @@ func voteFresh(proto protocol.ConsensusVersion, freshData freshnessData, vote un
+ 
+ }
+ 
++func isObsoleteVote(freshData freshnessData, vote unauthenticatedVote) bool {
++	switch {
++	case vote.R.Round < freshData.PlayerRound:
++		return true
++	case vote.R.Round > freshData.PlayerRound:
++		return false
++	default:
++		if vote.R.Period < freshData.PlayerPeriod {
++			return true
++		}
++		if vote.R.Period > freshData.PlayerPeriod {
++			return false
++		}
++		return vote.R.Step < freshData.PlayerStep
++	}
++}
++
+ // bundleFresh determines whether a bundle satisfies freshness rules.
+ func bundleFresh(freshData freshnessData, b unauthenticatedBundle) error {
+ 	if freshData.PlayerRound != b.Round {
+diff --git a/cmd/algod/main.go b/cmd/algod/main.go
+index 7f36c866a..86ee6319f 100644
+--- a/cmd/algod/main.go
++++ b/cmd/algod/main.go
+@@ -29,6 +29,7 @@ import (
+ 	"strings"
+ 	"time"
+ 
++	"github.com/algorand/go-algorand/agreement"
+ 	"github.com/algorand/go-algorand/config"
+ 	"github.com/algorand/go-algorand/crypto"
+ 	"github.com/algorand/go-algorand/daemon/algod"
+@@ -181,6 +182,8 @@ func run() int {
+ 		log.Fatalf("Cannot load config: %v", err)
+ 	}
+ 
++	agreement.InitConsensusMessageLogger(absolutePath)
++
+ 	// log is not setup yet
+ 	fmt.Printf("Config loaded from %s\n", absolutePath)
+ 	fmt.Println("Configuration after loading/defaults merge: ")
+diff --git a/node/node.go b/node/node.go
+index be0491ec8..85881e134 100644
+--- a/node/node.go
++++ b/node/node.go
+@@ -247,6 +247,14 @@ recreateNetwork:
+ 		p2pNode = wsNode
+ 	}
+ 	node.net = p2pNode
++	agreement.SetConsensusPeerProvider(func() (uint64, uint64) {
++		if node.net == nil {
++			return 0, 0
++		}
++		inPeers := len(node.net.GetPeers(network.PeersConnectedIn))
++		outPeers := len(node.net.GetPeers(network.PeersConnectedOut))
++		return uint64(inPeers), uint64(outPeers)
++	})
+ 
+ 	node.cryptoPool = execpool.MakePool(node, "worker", "cryptoPool")
+ 	node.lowPriorityCryptoVerificationPool = execpool.MakeBacklog(node.cryptoPool, 2*node.cryptoPool.GetParallelism(), execpool.LowPriority, node, "worker", "lowPriorityCryptoVerificationPool")
