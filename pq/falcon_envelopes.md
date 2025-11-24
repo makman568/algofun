@@ -475,12 +475,13 @@ Midpoint estimate:
 **With Falcon Envelopes:** 45-67 GB/day (4.3-6.4 Mbps) (baseline + PQ overhead)
 **Increase factor:** ~6-9×, depending on relay role and peering.
 
-## 9.5 Validator Bandwidth
+### 9.4.1 Per-Peer Bandwidth Model
 
-Non-relay participation nodes gossip with far fewer peers and therefore see a reduced envelope set:
-**~3-6 GB/day (~0.3-0.6 Mbps)** in steady state (still within typical residential/hosting uplinks).
+The bandwidth figures above represent the **per-peer traffic flow** between any two connected nodes in the network, regardless of node type (relay-to-relay, relay-to-participation, or participation-to-participation). The aggregate bandwidth a node experiences scales with its number of peer connections, but the per-peer message flow remains constant and topology-independent.
 
-## 9.6 Storage (Falcon Envelope Cache)
+A relay node with many peers (e.g., 50-100 connections) will experience higher aggregate bandwidth proportional to its peer count. A participation node with fewer peers (e.g., 4-8 connections) will experience lower aggregate bandwidth. However, the bandwidth per individual peer connection remains consistent at ~45-67 GB/day as calculated above.
+
+## 9.5 Storage (Falcon Envelope Cache)
 
 - **Retention window:** 256-400 rounds
 - **Envelopes per round:** ~1,084 (theoretical maximum)
@@ -489,7 +490,7 @@ Non-relay participation nodes gossip with far fewer peers and therefore see a re
 - **Type:** In-memory cache only (not persisted to disk)
 - **Pruning:** Automatic when State Proof covers range
 
-## 9.7 CPU Verification Cost
+## 9.6 CPU Verification Cost
 
 **Single Verification:**
 
@@ -793,7 +794,7 @@ The companion paper derives the theoretical maximum message generation from firs
 - **Total theoretical generation: ~1,084 messages per round**
 
 **Empirical Support:**
-Mainnet telemetry from a well-connected participation node shows observed message totals of ~1,077 per round,
+Mainnet telemetry from a well-connected node shows observed message totals of ~1,077 per round,
 closely matching the theoretical prediction and supporting the model's accuracy.
 
 **Conservative Planning:**

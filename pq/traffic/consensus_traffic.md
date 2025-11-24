@@ -144,6 +144,8 @@ To complete the analysis, we collected empirical data from the Algorand mainnet 
 
 The empirical data was collected by instrumenting a standard Algorand participation node running in a **P2P hybrid mode**. The node was connected to the mainnet with a typical configuration of **~4 relay nodes** and **~60 P2P peers**.
 
+**Note on node choice:** A participation node was chosen for data collection purely for operational convenience. The agreement layer's design ensures that all nodes—relay or non-relay—observe the same set of *distinct consensus messages* before reaching their local threshold, making any well-connected node suitable for measuring the theoretical message generation rate. The per-peer message flow is topology-independent.
+
 We "snooped" the consensus message traffic visible to this node over a 24-hour period on November 23, 2025. The instrumentation aggregated the number of unique consensus messages per round, recording them into the `consensus_messages_2025-11-23.csv` file.
 
 Each row in this file represents a single consensus round and contains the following key data points used in this analysis:
@@ -221,15 +223,25 @@ Using the theoretical maximum ensures:
 - **Reproducible estimates**: Anyone can verify from protocol parameters
 - **Topology independence**: Not dependent on node position or observation artifacts
 
-**Bandwidth projections:**
+### 10.1 Per-Peer Bandwidth Model
+
+The theoretical message count represents the **per-peer traffic flow** that any two nodes (relay-to-relay, relay-to-participation, or participation-to-participation) should model in the unoptimized case. This is not aggregate bandwidth across all peer connections, but rather the bandwidth for a single peer relationship.
+
+**Key insight:** The ~1,084 messages/round figure models the flow of *distinct consensus messages* between any pair of connected nodes, regardless of node type. The total aggregate bandwidth a node experiences scales with its number of peer connections, but the per-peer flow remains constant.
+
+**Bandwidth projections (per-peer basis):**
 - **Per-envelope overhead**: 1.3-1.8 KB (Falcon-1024 signature + metadata)
 - **Daily bandwidth (envelopes only)**: 1,084 × 1.5 KB × 30,316 rounds/day ≈ **49 GB/day**
 - **Range**: ~42-59 GB/day (using 1.3-1.8 KB envelope sizes)
-- **Total relay bandwidth (baseline + envelopes)**: **~45-67 GB/day**, assuming today's 3-8 GB/day baseline continues
+- **Total bandwidth with baseline (baseline + envelopes)**: **~45-67 GB/day**, assuming today's 3-8 GB/day baseline continues
+
+**Note:** Actual aggregate bandwidth experienced by a node depends on its number of peer connections. A relay node with many peers will experience proportionally higher aggregate traffic, while a participation node with fewer peers will experience lower aggregate traffic. However, the per-peer message flow remains consistent across node types.
 
 ## 11. Conclusion
 
 This paper provides a robust model for understanding Algorand's consensus traffic through theoretical derivation and empirical support. The **theoretical total of ~1,084 messages per round** (607 core + 477 pipelined) represents the maximum message generation from first principles, derived from protocol parameters and stake distribution. The empirical data supports this model, with observed message totals (~1,077) closely matching the theoretical prediction.
+
+**This theoretical figure models the per-peer message flow between any two connected nodes in the network**, regardless of whether they are relay nodes, participation nodes, or any other node type. The aggregate bandwidth a node experiences scales with its number of peer connections, but the per-peer traffic flow remains constant and topology-independent.
 
 For capacity planning and protocol upgrades, the theoretical maximum provides a conservative, reproducible upper bound that is topology-independent and verifiable by anyone with access to the protocol parameters and stake distribution. The close alignment between theory (~1,084) and observation (~1,077) supports the conclusion that this theoretical calculation accurately models real network behavior while providing appropriate safety margin for worst-case scenarios.
 
