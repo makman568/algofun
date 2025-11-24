@@ -379,17 +379,17 @@ as the network attempts to gather a supermajority from a larger committee pool.
 **Example Spike Scenario:**
 
 ```
-Normal operation: ~1,084 envelopes/round → 43-59 GB/day
-Recovery mode: 1,500-2,500 envelopes/round → 59-135 GB/day (temporary)
+Normal operation: ~1,084 envelopes/round → 4.1-5.6 Mbps
+Recovery mode: 1,500-2,500 envelopes/round → 5.6-12.8 Mbps (temporary)
 ```
 
 **Relay Infrastructure Resilience:**
-Even if the bandwidth load temporarily surges to ~135 GB/day during a recovery window, this
+Even if the bandwidth load temporarily surges to ~12.8 Mbps during a recovery window, this
 remains comfortably within the burst capacity of standard relay infrastructure:
 
-- Modern relay nodes: 1 Gbps uplinks (86 TB/day theoretical)
-- Actual burst requirement: ~135 GB/day
-- Utilization during spike: < 0.16% of link capacity
+- Modern relay nodes: 1 Gbps uplinks
+- Actual burst requirement: ~12.8 Mbps
+- Utilization during spike: < 1.3% of link capacity
 
 **No Death Spiral:**
 The protocol naturally reverts to standard committee sizes immediately upon round finalization.
@@ -456,29 +456,29 @@ Using the conservative theoretical estimate of **1,084 envelopes per round**:
 Lower bound (compact envelopes):
 
 ```
-1,084 × 1.3 KB × 30,316 ≈ 42.7 GB/day
+1,084 × 1.3 KB × 30,316 ≈ 42.7 GB/day ≈ 4.1 Mbps
 ```
 
 Upper bound (larger envelopes):
 
 ```
-1,084 × 1.8 KB × 30,316 ≈ 59.1 GB/day
+1,084 × 1.8 KB × 30,316 ≈ 59.1 GB/day ≈ 5.6 Mbps
 ```
 
 Midpoint estimate:
 
 ```
-1,084 × 1.5 KB × 30,316 ≈ 49.3 GB/day
+1,084 × 1.5 KB × 30,316 ≈ 49.3 GB/day ≈ 4.7 Mbps
 ```
 
-**Current baseline:** 3-8 GB/day
-**With Falcon Envelopes:** 45-67 GB/day (baseline + PQ overhead)
+**Current baseline:** 3-8 GB/day (0.3-0.8 Mbps)
+**With Falcon Envelopes:** 45-67 GB/day (4.3-6.4 Mbps) (baseline + PQ overhead)
 **Increase factor:** ~6-9×, depending on relay role and peering.
 
 ## 9.5 Validator Bandwidth
 
 Non-relay participation nodes gossip with far fewer peers and therefore see a reduced envelope set:
-**~3-6 GB/day** in steady state (still within typical residential/hosting uplinks).
+**~3-6 GB/day (~0.3-0.6 Mbps)** in steady state (still within typical residential/hosting uplinks).
 
 ## 9.6 Storage (Falcon Envelope Cache)
 
@@ -533,7 +533,7 @@ vulnerabilities are introduced. The existing Byzantine resistance mechanisms rem
 - No changes to block structure or ledger format
 - No heavy certificate machinery or aggregation
 - Reuses existing participation key infrastructure
-- Scales with current relay bandwidth (tens of GB/day, ≈4-10× today’s baseline but still trivial relative to 1 Gbps links)
+- Scales with current relay bandwidth (~4-6 Mbps, ≈6-9× today's baseline but still <1% of 1 Gbps links)
 - Provides full PQ message authentication
 - Minimal code changes to consensus implementation
 - Temporary cache only (~0.4-0.8 GB RAM)
@@ -547,7 +547,7 @@ property BA★ truly needs: authenticated committee messages. VRF verification r
 (committee selection cannot be forged), but granted, VRF secrecy is lost (selection becomes
 predictable). This is deemed acceptable even under attack as the ability to exploit this is extremely limited.
 Consensus logic, block structure, and ledger format remain unchanged. Falcon-1024 wrappers
-introduce a manageable bandwidth overhead (steady-state ~45-67 GB/day for relays, still <0.6% of a 1 Gbps link)
+introduce a manageable bandwidth overhead (steady-state ~4.3-6.4 Mbps for relays, still <0.7% of a 1 Gbps link)
 and a moderate RAM cache (~0.4-0.8 GB) but avoid megabyte-scale certificate growth and on-chain bloat. Importantly,
 Falcon-1024 verification is significantly faster than Ed25519 (~5-10× speedup), making this upgrade a CPU
 performance improvement rather than a compromise.
@@ -564,16 +564,21 @@ complete post-quantum upgrade. The principal remaining limitations are discussed
 
 ## 12.1 Loss of Committee Secrecy and Targeted-DoS Risk
 
-A cryptographically relevant quantum computer (CRQC) breaks ECDSA/Ed25519 VRF secrecy. Once the sortition
-seed is revealed, an adversary can compute every committee membership and every block-proposer identity
-in advance.
+### Relationship to Existing Liveness Risks
+
+It is important to recognize that the Algorand protocol already carries liveness risks today stemming from its concentrated stake distribution. Approximately two-thirds of online voting weight is held by several dozen large institutional operators spread across exchanges, custodians, and enterprise validators. A well-resourced adversary could attempt to suppress these operators through targeted network attacks, thereby slowing or temporarily stalling consensus. This is not a hypothetical new risk introduced by quantum computing, but a structural liveness vulnerability intrinsic to the present-day network—independent of Falcon Envelopes or post-quantum considerations.
+
+A cryptographically relevant quantum computer primarily alters the efficiency of such attacks rather than their nature. A CRQC breaks ECDSA/Ed25519 VRF secrecy, allowing an adversary to compute every committee membership and every block-proposer identity in advance once the sortition seed is revealed. While Falcon Envelopes remove the catastrophic new integrity failure mode introduced by quantum signature forgeries, they do not remove the pre-existing possibility of targeted censorship. Instead, quantum capabilities would allow an adversary to time these attacks more precisely due to loss of committee secrecy, increasing tactical efficiency but not introducing a fundamentally new attack class. Thus, the residual risk under Falcon Envelopes remains a liveness (DoS) concern that is already present today, rather than a new or unanticipated integrity risk.
+
+### Quantum-Enhanced Predictability
 
 The resulting new capability is **round-level predictability** of who must be suppressed to delay or
 censor the chain. This is a genuine degradation: classical adversaries have only statistical knowledge of
 target selection frequency, whereas a quantum adversary obtains exact timing.
 
-However, this degradation does **not** materially increase the practical feasibility of a successful
-attack, for reasons that apply equally today:
+However, obtaining this timing advantage requires substantial upfront quantum computational effort. To reveal committee participation schedules, an adversary would need to break the VRF keys of a large number of high-stake validators—likely the top twenty or more. This alone represents a massive quantum effort, and achieving it yields only marginal benefit. Even after recovering these keys, the attacker must still successfully execute a broad, sustained denial-of-service operation against those same operators in order to impact liveness at all. In practical terms, the quantum expenditure required to expose committee schedules does not eliminate or meaningfully reduce the operational burden of suppressing many large validators simultaneously; it merely refines the timing.
+
+Beyond this quantum computational barrier, the degradation does **not** materially increase the practical feasibility of a successful attack, for reasons that apply equally today:
 
 1. **Target-to-IP mapping remains extremely difficult**  
    Algorand’s relay-based gossip architecture, encrypted client connections, absence of a public validator directory,
@@ -696,9 +701,9 @@ Using the theoretical maximum of **1,084 envelopes per round**:
 ≈ 49.3 GB/day
 ```
 
-**Current baseline:** 3-8 GB/day
-**With Falcon Envelopes:** 45-67 GB/day (baseline + PQ overhead)
-**Total relay bandwidth:** ~45-67 GB/day
+**Current baseline:** 3-8 GB/day (0.3-0.8 Mbps)
+**With Falcon Envelopes:** 45-67 GB/day (4.3-6.4 Mbps) (baseline + PQ overhead)
+**Total relay bandwidth:** ~45-67 GB/day (~4.3-6.4 Mbps)
 
 ## A.5 Falcon Envelope Cache Size
 
@@ -757,7 +762,7 @@ CPU utilization (8-core): 1.36 ms ÷ 2,850 ms ≈ 0.048%
 | State Proofs                   | PQ-Secure (Falcon)      | PQ-Secure              | **PQ-Secure (unchanged)**  |
 | Catchup Correctness            | Guaranteed              | Guaranteed             | **Guaranteed**             |
 | Storage Overhead               | 0                       | 0                      | **~0.4-0.8 GB (RAM only)** |
-| Bandwidth Overhead             | Baseline                | Baseline               | **+42-59 GB/day**          |
+| Bandwidth Overhead             | Baseline                | Baseline               | **+42-59 GB/day (+4.0-5.6 Mbps)**          |
 | DoS Resistance                 | High (secret selection) | Degraded (predictable) | Degraded (out of scope)    |
 
 **Summary:** Falcon Envelopes restore all critical authentication and safety properties under
