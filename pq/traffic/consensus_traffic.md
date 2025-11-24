@@ -1,6 +1,6 @@
 # Algorand Consensus Message Quantity Analysis
 
-**A Three-Step Analysis: Theory, Optimization, and Empirical Verification**
+**A Three-Step Analysis: Theory, Optimization, and Empirical Support**
 
 ---
 
@@ -10,9 +10,9 @@ This paper presents a comprehensive analysis of Algorand's consensus message vol
 
 2.  **Protocol Optimization Analysis:** Second, we explain how the live Algorand protocol optimizes this theoretical traffic. We detail the "early threshold termination" mechanism, where nodes suppress the propagation of votes once a quorum weight is achieved, effectively making subsequent votes for that phase obsolete and preventing them from congesting the network.
 
-3.  **Empirical Verification:** Finally, we present and analyze empirical data from mainnet telemetry (`consensus_messages_2025-11-23.csv`). We confirm that the observed traffic is statistically lower than the theoretical profile and consistent with the behavior of the early termination optimization.
+3.  **Empirical Support for Theoretical Predictions:** Finally, we present and analyze empirical data from mainnet telemetry (`consensus_messages_2025-11-23.csv`). We show that the observed traffic is statistically lower than the theoretical profile and consistent with the behavior of the early termination optimization.
 
-This analysis validates our understanding of the consensus dynamics, showing that while the theoretical committee size is large, the practical message load is significantly and predictably smaller. This finding is topology-independent and provides a robust model for network capacity planning and estimating the impact of future protocol upgrades.
+This analysis supports our theoretical model of consensus dynamics, showing that while the theoretical committee size is large, the practical message load is significantly and predictably smaller. This finding is topology-independent and provides a robust model for network capacity planning and estimating the impact of future protocol upgrades.
 
 ---
 # Part I: The Theoretical Traffic Profile
@@ -135,10 +135,10 @@ These optimization mechanisms are enforced by the agreement layer, making them a
 *   **Topology Independence:** Because the filtering logic resides in the agreement layer, it functions identically across relay networks, P2P networks, and any hybrid configurations. The topology affects *how* messages are routed, but not *which* or *how many* are ultimately propagated.
 
 ---
-# Part III: Empirical Verification
+# Part III: Empirical Support for Theoretical Predictions
 ---
 
-To complete the analysis, we collected empirical data from the Algorand mainnet to verify that our model of "theory + optimization" matches reality. This section describes our data collection methodology and presents the results.
+To complete the analysis, we collected empirical data from the Algorand mainnet to provide supporting evidence that our model of "theory + optimization" matches reality. This section describes our data collection methodology and presents the results.
 
 ## 7. Data Collection Methodology
 
@@ -152,9 +152,9 @@ Each row in this file represents a single consensus round and contains the follo
 - `cert_votes`: The total count of unique cert votes observed by the node in that round.
 - `obsolete_votes`: The count of votes that were received by the node but ignored because they were for a step that was already completed.
 
-## 8. Comparison of Empirical Data with Theory
+## 8. Empirical Support for Theoretical Model
 
-The collected data provides a real-world basis to validate our model. As predicted in Part II, the observed message counts are statistically lower than the theoretical maximums due to protocol optimizations.
+The collected data supports our theoretical model. As predicted in Part II, the observed message counts are statistically lower than the theoretical maximums due to protocol optimizations.
 
 | Phase       | Theoretical Expectation | Observed Empirical Range | Consistent with Theory + Optimization? |
 |-------------|-------------------------|--------------------------|----------------------------------------|
@@ -165,9 +165,9 @@ As the table shows:
 - The observed range for **Soft Votes (152-360)** has a mean that is clearly lower than the theoretical expectation of ≈354, which is consistent with the effect of threshold termination. The upper bound slightly exceeds the theoretical mean due to normal statistical variance.
 - The observed range for **Cert Votes (96-192)** is entirely below the theoretical expectation of ≈233. This is also consistent with the threshold termination optimization, which has an even stronger effect in this phase due to the lower quorum threshold.
 
-The empirical data therefore confirms that our model is correct: the live network traffic is a direct and predictable result of the unoptimized theoretical profile being shaped by in-protocol optimizations.
+The empirical data therefore supports our model: the live network traffic is a direct and predictable result of the unoptimized theoretical profile being shaped by in-protocol optimizations.
 
-Furthermore, the telemetry data provides direct evidence of this optimization process. The `obsolete_votes` column shows a range of **337 - 901** obsolete votes per round. This significant, non-zero number confirms that the network is actively receiving and then discarding a large volume of votes made obsolete by the threshold termination mechanism, just as described in Part II.
+Furthermore, the telemetry data provides direct evidence of this optimization process. The `obsolete_votes` column shows a range of **337 - 901** obsolete votes per round. This significant, non-zero number shows that the network is actively receiving and then discarding a large volume of votes made obsolete by the threshold termination mechanism, just as described in Part II.
 
 This relationship offers a crucial insight. For a super-well-connected, leading-edge node like the one instrumented, the total number of distinct consensus messages it **sees** in a round can be approximated by summing its useful core votes and its obsolete votes. This combined empirical total then closely aligns with the total theoretical message generation across the network (core + pipelined next votes).
 
@@ -176,7 +176,7 @@ Using our observed midpoints:
 -   **Observed Obsolete Votes:** (midpoint of 337-901) = 619 messages
 -   **Empirical Total Seen (Core + Obsolete):** 458 + 619 = **1077 messages**
 
-This empirically observed total of **~1077 messages** aligns remarkably well with the **Total Theoretical Generated** across the network (approx. 607 core + 477 pipelined = **1084 messages**). This strong correlation validates our entire model: the `obsolete_votes` seen by a leading-edge node represent the "missing" theoretical votes (including the pipelined Next votes) that are generated but not needed for its own immediate quorum, confirming its position at the forefront of consensus processing.
+This empirically observed total of **~1077 messages** aligns remarkably well with the **Total Theoretical Generated** across the network (approx. 607 core + 477 pipelined = **1084 messages**). This strong correlation supports our entire model: the `obsolete_votes` seen by a leading-edge node represent the "missing" theoretical votes (including the pipelined Next votes) that are generated but not needed for its own immediate quorum, consistent with its position at the forefront of consensus processing.
 
 ---
 # Part IV: Summary and Implications
@@ -185,6 +185,8 @@ This empirically observed total of **~1077 messages** aligns remarkably well wit
 ## 9. Summary and Key Findings
 
 This analysis provides two distinct but related views of consensus traffic: the theoretical potential and the observed reality.
+
+**The theoretical message generation rate forms the basis for bandwidth calculation and capacity planning. The empirical results are presented solely to provide supporting evidence that the theoretical model accurately reflects real-world behavior.**
 
 ### 9.1 Theoretical View
 
@@ -212,7 +214,7 @@ The primary reasons for the difference are:
 
 ## 10. Implications for Post-Quantum Upgrades
 
-For Falcon Envelope bandwidth calculations, the **theoretical total of ~1,084 messages per round** (607 core + 477 pipelined) provides the appropriate conservative upper bound. The empirical data validates that this theoretical calculation accurately models real network behavior, with observed totals (~1,077) closely matching the theoretical prediction.
+For Falcon Envelope bandwidth calculations, the **theoretical total of ~1,084 messages per round** (607 core + 477 pipelined) provides the appropriate conservative upper bound. The empirical data supports this theoretical calculation, with observed totals (~1,077) closely matching the theoretical prediction.
 
 Using the theoretical maximum ensures:
 - **Conservative capacity planning**: Provisions for unoptimized worst-case
@@ -227,9 +229,9 @@ Using the theoretical maximum ensures:
 
 ## 11. Conclusion
 
-This paper provides a robust model for understanding Algorand's consensus traffic through theoretical derivation and empirical validation. The **theoretical total of ~1,084 messages per round** (607 core + 477 pipelined) represents the maximum message generation from first principles, derived from protocol parameters and stake distribution. The empirical data confirms this model is accurate, with observed message totals (~1,077) closely matching the theoretical prediction.
+This paper provides a robust model for understanding Algorand's consensus traffic through theoretical derivation and empirical support. The **theoretical total of ~1,084 messages per round** (607 core + 477 pipelined) represents the maximum message generation from first principles, derived from protocol parameters and stake distribution. The empirical data supports this model, with observed message totals (~1,077) closely matching the theoretical prediction.
 
-For capacity planning and protocol upgrades, the theoretical maximum provides a conservative, reproducible upper bound that is topology-independent and verifiable by anyone with access to the protocol parameters and stake distribution. The close alignment between theory (~1,084) and observation (~1,077) validates that this theoretical calculation accurately models real network behavior while providing appropriate safety margin for worst-case scenarios.
+For capacity planning and protocol upgrades, the theoretical maximum provides a conservative, reproducible upper bound that is topology-independent and verifiable by anyone with access to the protocol parameters and stake distribution. The close alignment between theory (~1,084) and observation (~1,077) supports the conclusion that this theoretical calculation accurately models real network behavior while providing appropriate safety margin for worst-case scenarios.
 
 ---
 ## Appendix: Source Code References

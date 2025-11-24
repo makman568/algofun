@@ -428,10 +428,10 @@ Using the November 23, 2025 stake distribution (`algorand-consensus.csv`) and th
 - **Next votes (pipelined):** ~477 messages (committee size 5,000)
 - **Total theoretical generation: ~1,084 messages per round**
 
-**Empirical Validation:**
+**Empirical Support:**
 Mainnet telemetry from a well-connected node shows observed totals of ~1,077 messages per round,
-closely matching the theoretical prediction. This validates that our theoretical model accurately
-represents real network behavior.
+closely matching the theoretical prediction. This supports the theoretical model and demonstrates
+that it accurately represents real network behavior.
 
 **Why Use Theoretical Rather Than Empirical:**
 
@@ -442,7 +442,7 @@ represents real network behavior.
 5. **Future-proof:** Remains valid even if optimizations or network topology change
 
 **For Falcon Envelope bandwidth calculations, we use ~1,084 envelopes per round** as the conservative
-planning estimate. This represents the theoretical maximum that could be generated, validated by
+planning estimate. This represents the theoretical maximum that could be generated, supported by
 empirical data showing actual generation closely matches this theoretical bound.
 
 ## 9.3 Rounds per Day
@@ -651,9 +651,9 @@ Using the Poisson selection model `P(vote≥1 | s, N) = 1 - exp(-s × N)` applie
 
 **For Falcon envelope calculations, we use ~1,084** as the conservative planning estimate.
 
-**Empirical Validation:**
+**Empirical Support:**
 Mainnet telemetry from a well-connected node shows observed message totals of ~1,077 per round,
-closely matching the theoretical prediction and validating the model's accuracy.
+closely matching the theoretical prediction and supporting the model's accuracy.
 
 **Why Use Theoretical Rather Than Empirical:**
 
@@ -770,7 +770,7 @@ deployment are required to restore DoS resistance.
 
 # Appendix C — Message Quantity Justification
 
-For detailed theoretical derivation and empirical validation of the consensus message volume, see the companion document:
+For detailed theoretical derivation and empirical support for the consensus message volume, see the companion document:
 
 **"Algorand Consensus Message Quantity Analysis" (`traffic/consensus_traffic.md`)**
 
@@ -787,9 +787,9 @@ The companion paper derives the theoretical maximum message generation from firs
 - **Next votes (pipelined):** ~477 messages (committee size 5,000)
 - **Total theoretical generation: ~1,084 messages per round**
 
-**Empirical Validation:**
+**Empirical Support:**
 Mainnet telemetry from a well-connected participation node shows observed message totals of ~1,077 per round,
-closely matching the theoretical prediction and validating the model's accuracy.
+closely matching the theoretical prediction and supporting the model's accuracy.
 
 **Conservative Planning:**
 This document uses the theoretical maximum (~1,084) rather than empirical observations for capacity planning because:
