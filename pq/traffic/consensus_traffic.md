@@ -4,19 +4,17 @@
 
 ---
 
-## Abstract
-
-This document provides a **mathematical derivation** of expected consensus message volume based on source code
+We provide a **mathematical derivation** of expected consensus message volume based on source code
 parameters from the Algorand go-algorand repository and the **observed stake distribution on November 23, 2025**
-(`support/algorand-consensus_2025-11-23.csv`). The updated analysis demonstrates that relays should expect **~390-575 core consensus
+(`algorand-consensus_2025-11-23.csv`). The updated analysis demonstrates that relays should expect **~390-575 core consensus
 messages per round** and **~720-1,045 concurrent gossip messages** once pipelined next votes are counted—still far
 below the theoretical committee size of 2,990-5,000. The derivation remains **topology-independent**, applying
 equally to relay networks, P2P networks, and hybrid configurations.
 
 **Methodology:**
 - Statistical derivation from source-code parameters combined with measured stake fractions (no heuristics)
-- Inputs: consensus parameters, the November 23, 2025 stake CSV, and agreement-layer propagation rules
-- Output: predicted message counts that align with instrumented telemetry from the `consensus_messages.csv` log file.
+- Inputs: consensus parameters, the November 23, 2025 stake distribution CSV from **consensus.algorand.observer**, and agreement-layer propagation rules
+- Output: predicted message counts that align with instrumented telemetry
 
 **Mathematical Prediction with Nov-23-2025 stake distribution:**
 
@@ -45,7 +43,7 @@ expectation explains the ±10% swing seen in telemetry.
 
 ### 1.1 Committee Sizes and Thresholds
 
-**File: `config/consensus.go:832-907`**
+**File: go-algorand `config/consensus.go`**
 
 ```go
 v8.NumProposers = 9
@@ -79,7 +77,7 @@ why some historical material still cites the lower count.
 
 **Important: Committee Sizes Are Probabilistic Expectations**
 
-**File: `data/committee/credential.go:99-106`**
+**File: `data/committee/credential.go`**
 
 ```go
 expectedSelection := float64(m.Selector.CommitteeSize(proto))
@@ -111,7 +109,7 @@ In a **successful, non-contentious round**, consensus proceeds through these pha
 - **Predicted messages**: ~12-25 proposals (Poisson expectation is ~20 unique proposers; tracker deduplication and priority filtering trim the tail but relays every fresh proposal until the highest-priority payload is known)
 - **Behavior**: All valid proposals are propagated so the network can converge on the highest-priority proposal
 
-**Note:** The 12-25 proposal range reflects the theoretical committee size derived from the proposer selection function and is intentionally conservative. In practice, empirical telemetry typically shows fewer observed proposals per round (often ~4-11), due to early soft-vote quorum being reached. Once the soft threshold is met, proposal propagation is no longer necessary for the current round, and late-arriving proposals are suppressed or discarded by the network. This optimization reduces the observed proposal count but does not alter the underlying committee model (see `traffic/support/proposals_discrepancy.md`).
+**Note:** The 12-25 proposal range reflects the theoretical committee size derived from the proposer selection function and is intentionally conservative. In practice, empirical telemetry typically shows fewer observed proposals per round (often ~4-11), due to early soft-vote quorum being reached. Once the soft threshold is met, proposal propagation is no longer necessary for the current round, and late-arriving proposals are suppressed or discarded by the network. This optimization reduces the observed proposal count but does not alter the underlying committee model).
 
 #### Phase 2: Soft Vote Phase
 - **Expected total committee weight**: 2,990
@@ -142,7 +140,7 @@ In a **successful, non-contentious round**, consensus proceeds through these pha
   for next votes is being rolled out, but this mathematical prediction already accounts for the much larger number of
   middle-tier accounts (0.1%-0.5%) that routinely win at least one next-vote ticket.
 - **Timing consideration**: Next votes for round r+1 begin during round r once sufficient information is available
-  (see `agreement/player.go` `stepNext` transitions), so they contribute directly to round-r bandwidth budgets.
+  (see `agreement/player.go` `stepNext` transitions), so theychristine_dkim@pm.me contribute directly to round-r bandwidth budgets.
 - **Bandwidth accounting**: Include these 330-470 votes in the concurrent message count even though they conceptually
   “belong” to round r+1.
 
@@ -157,7 +155,7 @@ P(vote≥1 | s, N) = 1 - exp(-s × N)
 ```
 
 This Poisson approximation is accurate because `N` is small relative to total stake. Summing `P(vote≥1)` across all
-online accounts (from `algorand-consensus.csv`) gives the expected number of unique voters per step:
+online accounts (from `algorand-consensus_2025-11-23.csv`) gives the expected number of unique voters per step:
 
 | Step  | Committee Size | Expected unique voters (Nov-23-2025) |
 |-------|----------------|---------------------------------------|
@@ -217,7 +215,7 @@ layer, ensuring consistent behavior regardless of network topology.
 
 ### 2.1 Network Layer: Immediate Ignore Action
 
-**File: `agreement/gossip/network.go:114-131`**
+**File: `agreement/gossip/network.go`**
 
 When a consensus message arrives at the network layer (relay or P2P), it is immediately marked as
 "Ignore" and forwarded to the agreement layer:
@@ -245,7 +243,7 @@ agreement layer and waits for explicit relay instructions.
 
 ### 2.2 Agreement Layer: Explicit Relay Decisions
 
-**File: `agreement/player.go:722-743`**
+**File: `agreement/player.go`**
 
 The agreement layer processes each message and decides whether to relay it:
 
@@ -279,7 +277,7 @@ after threshold is reached are ignored and NOT propagated.
 
 ### 3.1 Sender-Based Deduplication
 
-**File: `agreement/voteTracker.go:257-282`**
+**File: `agreement/voteTracker.go`**
 
 The `voteTracker` maintains a map of voters and rejects duplicate votes from the same sender:
 
@@ -308,7 +306,7 @@ so a sender can vote once in soft phase and once in cert phase, but not multiple
 
 ### 3.2 Freshness Filtering
 
-**File: `agreement/voteAggregator.go:194-212`**
+**File: `agreement/voteAggregator.go`**
 
 The `voteAggregator` filters votes by freshness before processing:
 
@@ -340,7 +338,7 @@ this ensures only fresh, unique votes are propagated.
 
 ### 4.1 Quorum Detection
 
-**File: `agreement/types.go:120-140`**
+**File: `agreement/types.go`**
 
 The `reachesQuorum` function checks if the accumulated weight meets the step threshold:
 
@@ -368,7 +366,7 @@ transitions to the next phase.
 
 ### 4.2 Threshold Detection and Propagation Stopping
 
-**File: `agreement/voteTracker.go:302-313`**
+**File: `agreement/voteTracker.go`**
 
 Once a proposal reaches the threshold, the tracker stops accumulating additional votes:
 
@@ -399,7 +397,7 @@ limiting the window for vote accumulation. This happens **per step**, so:
 
 ### 5.1 Optimized Bundle Creation
 
-**File: `agreement/voteTracker.go:317-355`**
+**File: `agreement/voteTracker.go`**
 
 When generating a certificate bundle, the system packs only the minimum votes needed to prove the
 threshold was reached:
@@ -448,7 +446,7 @@ in bundles containing the minimum necessary votes rather than all committee vote
 
 ### 6.1 Mainnet Stake Distribution (Nov 23, 2025)
 
-`algorand-consensus.csv` (snapshot on 2025-11-23; see `support/algorand-consensus_2025-11-23.csv`) lists every online
+`algorand-consensus_2025-11-23.csv` (snapshot on 2025-11-23; see `algorand-consensus_2025-11-23.csv`) lists every online
 participation key with its effective balance. Normalizing by the 1,941,643,454.80 Ⱥ online stake yields the following
 aggregates:
 
@@ -524,7 +522,7 @@ networks and P2P networks use the same agreement layer code.
 
 ### 7.1 Relay Network
 
-**File: `network/wsNetwork.go:375-378`**
+**File: `network/wsNetwork.go`**
 
 Relay networks call the same broadcast/relay interface:
 
@@ -536,7 +534,7 @@ func (wn *WebsocketNetwork) Relay(ctx context.Context, tag Tag, data []byte, wai
 
 ### 7.2 P2P Network
 
-**File: `network/p2pNetwork.go:639-640`**
+**File: `network/p2pNetwork.go`**
 
 P2P networks using libp2p GossipSub call the same interface:
 
@@ -550,7 +548,7 @@ func (n *P2PNetwork) Relay(ctx context.Context, tag protocol.Tag, data []byte, w
 
 ### 7.3 Unified Agreement Layer
 
-**File: `agreement/gossip/network.go:155-169`**
+**File: `agreement/gossip/network.go`**
 
 Both topologies invoke the same agreement layer relay function:
 
@@ -579,7 +577,7 @@ agreement-layer filtering:
 
 ### 8.1 Relay Network Deduplication
 
-**File: `network/messageFilter.go:48-56`**
+**File: `network/messageFilter.go`**
 
 ```go
 func (f *messageFilter) CheckIncomingMessage(tag protocol.Tag, msg []byte, add bool, promote bool) bool {
@@ -595,7 +593,7 @@ func (f *messageFilter) CheckIncomingMessage(tag protocol.Tag, msg []byte, add b
 
 ### 8.2 P2P Network Deduplication
 
-**File: `network/p2p/pubsub.go:123-126`**
+**File: `network/p2p/pubsub.go`**
 
 ```go
 func txMsgID(m *pubsub_pb.Message) string {
