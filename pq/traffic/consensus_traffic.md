@@ -176,7 +176,7 @@ Using our observed midpoints:
 -   **Observed Obsolete Votes:** (midpoint of 337-901) = 619 messages
 -   **Empirical Total Seen (Core + Obsolete):** 458 + 619 = **1077 messages**
 
-This empirically observed total of **~1077 messages** aligns remarkably well with the **Total Theoretical Generated** across the network (approx. 587 core + 477 pipelined = **1064 messages**). This strong correlation validates our entire model: the `obsolete_votes` seen by a leading-edge node represent the "missing" theoretical votes (including the pipelined Next votes) that are generated but not needed for its own immediate quorum, confirming its position at the forefront of consensus processing.
+This empirically observed total of **~1077 messages** aligns remarkably well with the **Total Theoretical Generated** across the network (approx. 607 core + 477 pipelined = **1084 messages**). This strong correlation validates our entire model: the `obsolete_votes` seen by a leading-edge node represent the "missing" theoretical votes (including the pipelined Next votes) that are generated but not needed for its own immediate quorum, confirming its position at the forefront of consensus processing.
 
 ---
 # Part IV: Summary and Implications
@@ -212,14 +212,24 @@ The primary reasons for the difference are:
 
 ## 10. Implications for Post-Quantum Upgrades
 
-For Falcon Envelope bandwidth calculations, the empirically observed **~720-1,045 messages per round** is the correct input.
+For Falcon Envelope bandwidth calculations, the **theoretical total of ~1,084 messages per round** (607 core + 477 pipelined) provides the appropriate conservative upper bound. The empirical data validates that this theoretical calculation accurately models real network behavior, with observed totals (~1,077) closely matching the theoretical prediction.
+
+Using the theoretical maximum ensures:
+- **Conservative capacity planning**: Provisions for unoptimized worst-case
+- **Reproducible estimates**: Anyone can verify from protocol parameters
+- **Topology independence**: Not dependent on node position or observation artifacts
+
+**Bandwidth projections:**
 - **Per-envelope overhead**: 1.3-1.8 KB (Falcon-1024 signature + metadata)
-- **Daily bandwidth (envelopes only)**: **~27-54 GB/day**
-- **Total relay bandwidth (baseline + envelopes)**: **~30-62 GB/day**, assuming today’s 3-8 GB/day baseline continues
+- **Daily bandwidth (envelopes only)**: 1,084 × 1.5 KB × 30,316 rounds/day ≈ **49 GB/day**
+- **Range**: ~42-59 GB/day (using 1.3-1.8 KB envelope sizes)
+- **Total relay bandwidth (baseline + envelopes)**: **~45-67 GB/day**, assuming today's 3-8 GB/day baseline continues
 
 ## 11. Conclusion
 
-This paper provides a robust model for understanding Algorand's consensus traffic by separating the **theoretical profile** from the **empirically observed reality**. The theoretical count (≈607 core messages) is derived from first principles, while the observed bandwidth (~720-1,045 concurrent messages) is the practical result of in-protocol optimizations like **threshold termination** and the inclusion of pipelined traffic. This dual perspective is essential for accurate network capacity planning and analysis.
+This paper provides a robust model for understanding Algorand's consensus traffic through theoretical derivation and empirical validation. The **theoretical total of ~1,084 messages per round** (607 core + 477 pipelined) represents the maximum message generation from first principles, derived from protocol parameters and stake distribution. The empirical data confirms this model is accurate, with observed message totals (~1,077) closely matching the theoretical prediction.
+
+For capacity planning and protocol upgrades, the theoretical maximum provides a conservative, reproducible upper bound that is topology-independent and verifiable by anyone with access to the protocol parameters and stake distribution. The close alignment between theory (~1,084) and observation (~1,077) validates that this theoretical calculation accurately models real network behavior while providing appropriate safety margin for worst-case scenarios.
 
 ---
 ## Appendix: Source Code References
