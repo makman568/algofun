@@ -18,14 +18,16 @@ equally to relay networks, P2P networks, and hybrid configurations.
 
 **Mathematical Prediction with Nov-23-2025 stake distribution:**
 
-**Protocol-centric count (messages "belonging" to round r):**
-- Proposals: ~12-25 messages (NumProposers=20 since v10; dedup and priority filtering keep it slightly below the 20-ticket expectation)
-- Soft votes: **~260-360 unique voters** (Poisson selection over real stake fractions; telemetry shows 280-340)
-- Cert votes: **~120-190 unique voters** (lower threshold but similar selection dynamics; telemetry 130-165)
-- **Subtotal: ~390-575 messages** (core consensus for round r)
+**Theoretical Message Count (per round, before optimizations):**
+- Proposals: **≈ 20 messages** (based on NumProposers = 20)
+- Soft votes: **≈ 354 unique voters** (derived from Poisson selection over stake distribution)
+- Cert votes: **≈ 233 unique voters** (derived from Poisson selection over stake distribution)
+- **Subtotal: ≈ 607 messages** (total theoretical core consensus messages for round r)
+
+It is important to note that these theoretical numbers represent the statistical expectation in an unoptimized scenario. In practice, the Algorand protocol employs an "early termination" optimization: vote propagation stops once a quorum weight threshold is met. This causes the empirically observed message counts to be statistically lower than these theoretical expectations, as reflected in the steady-state bandwidth numbers below.
 
 **Steady-state bandwidth (concurrent flows during round r):**
-- Core consensus (above): ~390-575 messages
+- Core consensus: ~390-575 messages
 - Next votes (pipelined for round r+1): **~330-470 messages** (same stake data applied to the 5,000-size committee)
 - **Total concurrent: ~720-1,045 messages per round**
 
@@ -106,17 +108,16 @@ In a **successful, non-contentious round**, consensus proceeds through these pha
 
 #### Phase 1: Proposal Phase
 - **Theoretical committee**: 20 proposers selected via VRF sortition (NumProposers=20 for all v10+ networks)
-- **Predicted messages**: ~12-25 proposals (Poisson expectation is ~20 unique proposers; tracker deduplication and priority filtering trim the tail but relays every fresh proposal until the highest-priority payload is known)
-- **Behavior**: All valid proposals are propagated so the network can converge on the highest-priority proposal
+- **Theoretical expectation**: **≈ 20 proposals** (based on the NumProposers=20 parameter).
+- **Behavior**: All valid proposals are propagated so the network can converge on the highest-priority proposal. The observed number of messages is typically lower (~4-11) due to network dynamics and early soft-vote quorum.
 
 **Note:** The 12-25 proposal range reflects the theoretical committee size derived from the proposer selection function and is intentionally conservative. In practice, empirical telemetry typically shows fewer observed proposals per round (often ~4-11), due to early soft-vote quorum being reached. Once the soft threshold is met, proposal propagation is no longer necessary for the current round, and late-arriving proposals are suppressed or discarded by the network. This optimization reduces the observed proposal count but does not alter the underlying committee model).
 
 #### Phase 2: Soft Vote Phase
 - **Expected total committee weight**: 2,990
 - **Weight threshold required**: 2,267 (76% of expected weight)
-- **Predicted messages (Nov-23-2025 distribution)**: **~260-360 unique votes**
-- **Reasoning**: Each account with stake fraction `s` is selected with probability `1 - e^{-s×2990}`. Summing this over the
-  observed distribution yields 354 expected voters; telemetry shows 280-340 due to threshold termination trimming the tail.
+- **Theoretical expectation (Nov-23-2025 distribution)**: **≈ 354 unique votes**
+- **Reasoning**: Each account with stake fraction `s` is selected with probability `1 - e^{-s×2990}`. Summing this over the observed distribution yields a theoretical expectation of ≈ 354 unique voters. In practice, the observed number is lower (telemetry shows 280-340) because of early threshold termination.
 - **Key insight**: Thresholds are measured in **weight**, but the Poisson selection process causes hundreds of distinct
   accounts (especially the 0.1%-0.5% “middle tier”) to emit at least one vote before the tracker detects quorum.
 - **Optimization**: Nodes stop relaying once the 2,267-weight threshold is reached, so most of the 354 expected voters do
@@ -125,9 +126,8 @@ In a **successful, non-contentious round**, consensus proceeds through these pha
 #### Phase 3: Cert Vote Phase
 - **Expected total committee weight**: 1,500
 - **Weight threshold required**: 1,112 (74% of expected weight)
-- **Predicted messages**: **~120-190 unique votes**
-- **Reasoning**: The same Poisson calculation with committee size 1,500 produces ~233 expected voters, but the lower
-  threshold and shorter phase halt propagation earlier; telemetry consistently shows 130-165 unique cert votes.
+- **Theoretical expectation**: **≈ 233 unique votes**
+- **Reasoning**: The same Poisson calculation with committee size 1,500 yields a theoretical expectation of ≈ 233 unique voters. In practice, the observed number is lower (telemetry consistently shows 130-165) because the lower threshold and shorter phase halt propagation even earlier.
 - **Key insight**: Cert has fewer total voters than soft, yet still far above the minimal bundle size because the
   agreement layer relays every fresh vote until quorum is observed locally.
 - **Optimization**: Round concludes immediately once the cert tracker crosses 1,112 weight.
@@ -135,10 +135,8 @@ In a **successful, non-contentious round**, consensus proceeds through these pha
 #### Phase 4: Next Vote Phase (Pipelining)
 - **Expected total committee weight**: 5,000
 - **Weight threshold required**: 3,838 (77% of expected weight)
-- **Predicted messages**: **~330-470 unique votes**
-- **Reasoning**: Applying the same Poisson model to the Nov-23-2025 stake CSV yields ~477 expected voters. Instrumentation
-  for next votes is being rolled out, but this mathematical prediction already accounts for the much larger number of
-  middle-tier accounts (0.1%-0.5%) that routinely win at least one next-vote ticket.
+- **Theoretical expectation**: **≈ 477 unique votes**
+- **Reasoning**: Applying the same Poisson model to the Nov-23-2025 stake CSV yields a theoretical expectation of ≈ 477 unique voters. The observed number is expected to be lower due to threshold termination, though instrumentation is still being rolled out.
 - **Timing consideration**: Next votes for round r+1 begin during round r once sufficient information is available
   (see `agreement/player.go` `stepNext` transitions), so theychristine_dkim@pm.me contribute directly to round-r bandwidth budgets.
 - **Bandwidth accounting**: Include these 330-470 votes in the concurrent message count even though they conceptually
@@ -163,20 +161,17 @@ online accounts (from `algorand-consensus_2025-11-23.csv`) gives the expected nu
 | Cert  | 1,500          | **≈ 233** |
 | Next  | 5,000          | **≈ 477** |
 
-These mathematical expectations are validated by on-chain telemetry from the `consensus_messages.csv` log file,
-which shows that relays observe **~280-340 soft votes** and **~130-165 cert votes** per round after accounting for
-threshold termination (which stops propagation before all expected voters appear). The prediction for next votes
-(330-470) is derived from the same mathematical model and will be testable once next-vote instrumentation lands.
+These mathematical expectations represent the theoretical, unoptimized case. In practice, on-chain telemetry from the `consensus_messages.csv` log file shows that relays observe statistically lower numbers (e.g., ~280-340 soft votes and ~130-165 cert votes per round) primarily due to threshold termination stopping vote propagation once a quorum is met. The prediction for next votes (330-470) is derived from the same mathematical model and will be testable once next-vote instrumentation lands.
 
 #### Total Per Normal Round
 
-**Protocol-centric view (messages "belonging" to round r):**
+**Theoretical view (messages "belonging" to round r, before optimizations):**
 ```
-Proposals:    ~12-25 messages
-Soft votes:   ~260-360 messages
-Cert votes:   ~120-190 messages
+Proposals:    ≈ 20 messages
+Soft votes:   ≈ 354 messages
+Cert votes:   ≈ 233 messages
 -------------------------------
-SUBTOTAL:     ~390-575 messages (core consensus)
+SUBTOTAL:     ≈ 607 messages (theoretical core consensus)
 ```
 
 **Steady-state bandwidth view (concurrent traffic during round r):**
@@ -612,14 +607,16 @@ period, step).
 
 ### 9.1 Message Count Breakdown
 
-**Protocol-centric count** (messages belonging to each round, using Nov-23-2025 distribution):
+**Theoretical Message Count** (messages "belonging" to each round, before optimizations):
 
-| Phase | Expected Weight* | Weight Threshold | Predicted Messages** | Notes |
-|-------|-----------------|------------------|----------------------|-------|
-| Proposals | 20 | N/A | ~12-25 | NumProposers = 20 (slight over-selection with dedup) |
-| Soft votes | 2,990 | 2,267 (76%) | **~260-360** | Sum of `1 - e^{-s×2,990}` over CSV stake fractions; telemetry 280-340 |
-| Cert votes | 1,500 | 1,112 (74%) | **~120-190** | Sum of `1 - e^{-s×1,500}`; telemetry 130-165 |
-| **Core Total** | **~4,500** | **N/A** | **~390-575** | Messages for round r |
+| Phase | Expected Weight* | Weight Threshold | Expected Messages** | Notes |
+|-------|------------------|------------------|---------------------|-------|
+| Proposals | 20 | N/A | **≈ 20** | NumProposers = 20 |
+| Soft votes | 2,990 | 2,267 (76%) | **≈ 354** | Derived from `1 - e^{-s×2,990}` over Nov-23-2025 stake fractions |
+| Cert votes | 1,500 | 1,112 (74%) | **≈ 233** | Derived from `1 - e^{-s×1,500}` over Nov-23-2025 stake fractions |
+| **Core Total** | **~4,500** | **N/A** | **≈ 607** | Theoretical messages for round r (before threshold termination) |
+
+The **Expected Messages** column above represents the theoretical maximum based on the Poisson calculation in an unoptimized case. The **Steady-state bandwidth** view below, in contrast, reflects the empirically observed traffic, which is statistically lower due to optimizations like threshold termination that halt vote propagation once quorum is reached.
 
 **Steady-state bandwidth** (concurrent message flows during round r):
 
@@ -730,13 +727,13 @@ the Nov-23-2025 stake distribution** and the agreement-layer mechanics that ever
 
 **Two practical perspectives:**
 
-**Protocol-centric (~390-575 messages):** Counts only proposals, soft votes, and cert votes for round r.
-- Explains why telemetry logs ~400-500 consensus messages even without next votes.
-- Useful for reasoning about tracker behavior and phase timing.
+**Theoretical-view (≈ 607 messages):** The pure mathematical expectation for core consensus messages in an unoptimized scenario.
+- Represents the upper bound of voters selected by the VRF.
+- Useful for understanding the raw output of the sortition algorithm before optimizations.
 
-**Bandwidth-centric (~720-1,045 messages):** Adds pipelined next votes to capture the live gossip stream.
+**Bandwidth-centric (~720-1,045 messages):** The empirically observed traffic, which includes core consensus messages (~390-575) and pipelined next votes (~330-470).
+- This view is statistically lower than the theoretical maximum due to early termination, but includes pipelined votes, making it essential for sizing network resources.
 - Use this when sizing Falcon envelopes, relay bandwidth, or DoS defenses.
-- Reflects the Poisson-derived expectation that hundreds of mid-tier accounts emit at least one vote per phase.
 
 Committee sizes (2,990/1,500/5,000) remain **statistical expectations**—not hard limits. The updated prediction is
 therefore derived from:
