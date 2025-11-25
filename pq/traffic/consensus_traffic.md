@@ -12,7 +12,7 @@ This paper presents a comprehensive analysis of Algorand's consensus message vol
 
 3.  **Empirical Analysis of Observed Traffic:** Finally, we examine mainnet telemetry (`consensus_messages-20251124.csv`) to understand how real rounds compare with the theoretical profile. The on-time votes required to reach quorum are indeed lower than the theoretical expectation due to threshold termination, while the *total* message count per round is higher because of network amplification (competing proposals and redundant delivery). The empirical data therefore validates the theoretical committee-size model while quantifying these real-world amplification factors.
 
-This analysis juxtaposes the theoretical and empirical perspectives on Algorand's consensus traffic. The theoretical committee sizes remain a crucial baseline, but the telemetry shows that post-quorum messages continue to arrive in large numbers, suggesting that the real network carries more distinct messages per round than the idealized model predicts. Understanding this gap is now central to capacity planning and protocol analysis.
+This analysis juxtaposes the theoretical and empirical perspectives on Algorand's consensus traffic. The theoretical committee sizes accurately predict unique participants, while the telemetry quantifies network amplification factors: competing proposals cause voters to split across multiple candidates, and redundant delivery paths increase message counts beyond unique sender counts. Understanding these amplification effects is essential for capacity planning and protocol analysis.
 
 ---
 # Part I: The Theoretical Traffic Profile
