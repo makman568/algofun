@@ -184,37 +184,43 @@ These values incorporate the actual stake distribution rather than the nominal c
 
 On-time participation stays below the theoretical expectation because quorum weight is met before the full committee responds:
 
-- **Soft:** Mean on-time unique ratio **0.885×** (median 0.882×; 99th percentile 0.994×).
-- **Cert:** Mean on-time unique ratio **0.600×** (median 0.602×; 99th percentile 0.725×).
+- **Soft:** Mean on-time unique ratio **0.885×** (±0.0023 s.e.; median 0.882×; 99th percentile 0.994×).
+- **Cert:** Mean on-time unique ratio **0.600×** (±0.0029 s.e.; median 0.602×; 99th percentile 0.725×).
 
 On-time message ratios match these numbers because each participant contributes one vote before quorum is satisfied. This validates that the theoretical committee-size model correctly predicts *who* participates in each step.
 
-### 8.3 Total Unique Amplification (Trailing Proposals)
+Because the theoretical expectation is constant across rounds (≈354 soft, ≈233 cert), scatterplots of observed on-time unique counts versus theory collapse to vertical bands centered on those constants. The ratios above therefore convey the same information more directly: observed points cluster tightly around the theoretical line for on-time uniques, while total-unique and total-message ratios (Sections 8.4–8.5) show the amplification once trailing proposals and duplicate deliveries are included.
+
+### 8.3 Absence of Next Votes
+
+The Next/liveness step never triggered during this capture window: all `next_*` columns remain zero. This indicates that every observed round completed soft and cert voting without invoking the liveness fallback, so the theoretical Next committee expectation (≈476 voters) remains a contingency for worst-case planning rather than an observed load.
+
+### 8.4 Total Unique Amplification (Trailing Proposals)
 
 After quorum, additional proposals continue to attract votes. Counting all unique senders per round yields:
 
-- **Soft:** Mean total unique ratio **1.385×** theory (median 1.374×; 99th percentile 1.636×). This ≈32% excess reflects ≈1.12 trailing proposals per round.
-- **Cert:** Mean total unique ratio **1.142×** theory (median 1.131×; 99th percentile 1.396×). Certification experiences ≈1.09 trailing proposals.
+- **Soft:** Mean total unique ratio **1.385×** theory (±0.0037 s.e.; median 1.374×; 99th percentile 1.636×). This ≈32% excess reflects ≈1.12 trailing proposals per round.
+- **Cert:** Mean total unique ratio **1.142×** theory (±0.0041 s.e.; median 1.131×; 99th percentile 1.396×). Certification experiences ≈1.09 trailing proposals.
 
 Thus even healthy rounds exhibit proposal fragmentation: different subsets of the committee vote for different candidates before the network converges on the winner.
 
-### 8.4 Message-Level Amplification
+### 8.5 Message-Level Amplification
 
 Counting all messages (on-time + pipelined + late) further amplifies load:
 
-- **Soft:** Mean total message ratio **1.838×** theory (median 1.823×; 99th percentile 2.173×).
-- **Cert:** Mean total message ratio **1.439×** theory (median 1.428×; 99th percentile 1.750×).
+- **Soft:** Mean total message ratio **1.838×** theory (±0.0050 s.e.; median 1.823×; 99th percentile 2.173×).
+- **Cert:** Mean total message ratio **1.439×** theory (±0.0050 s.e.; median 1.428×; 99th percentile 1.750×).
 
 These ≈1.6× factors explain why the network relays ~970 core messages per round instead of the theoretical 607.
 
-### 8.5 Duplication Factor (Messages per Sender)
+### 8.6 Duplication Factor (Messages per Sender)
 
 Redundant gossip and retransmissions add ≈30% overhead per participant even after deduplication by sender:
 
-- **Soft:** Mean duplication factor **1.33×** (median 1.33×; 99th percentile 1.37×).
-- **Cert:** Mean duplication factor **1.26×** (median 1.26×; 99th percentile 1.31×).
+- **Soft:** Mean duplication factor **1.33×** (±0.0010 s.e.; median 1.33×; 99th percentile 1.37×).
+- **Cert:** Mean duplication factor **1.26×** (±0.0011 s.e.; median 1.26×; 99th percentile 1.31×).
 
-### 8.6 Percentile Reference Table
+### 8.7 Percentile Reference Table
 
 | Phase | Metric | Mean | P50 | P90 | P95 | P99 |
 |-------|--------|------|-----|-----|-----|-----|
@@ -227,9 +233,19 @@ Redundant gossip and retransmissions add ≈30% overhead per participant even af
 | Cert  | Messages ÷ theory (total)  | 1.439× | 1.428× | 1.553× | 1.618× | 1.750× |
 | Cert  | Duplication factor (total) | 1.260× | 1.258× | 1.287× | 1.295× | 1.310× |
 
-(Next votes remain zero throughout the capture.)
+(Next votes remain zero throughout the capture; see §8.3.)
 
-### 8.7 Takeaway
+### 8.8 Amplification Drivers and Observables
+
+| Driver / Mechanism          | Observable Metric                                        |
+|----------------------------|----------------------------------------------------------|
+| Threshold termination      | On-time unique ÷ theory (Section 8.2)                     |
+| Trailing proposals         | Total unique ÷ theory (Section 8.4)                       |
+| Redundant gossip/delivery  | Messages ÷ theory and duplication factor (Sections 8.5–8.6) |
+
+This mapping ties each causal mechanism to the statistic that quantifies it in the telemetry.
+
+### 8.9 Takeaway
 
 Thus, the discrepancy between theoretical and observed message volume is *not* due to higher-than-expected participation. On-time unique participation closely tracks the theoretical committees. The higher message counts arise from two amplification mechanisms:
 1. **Multi-proposal contention:** trailing proposals continue to receive votes, so the union of unique senders exceeds the single-proposal expectation.
