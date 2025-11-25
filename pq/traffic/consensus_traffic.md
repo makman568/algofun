@@ -6,13 +6,13 @@
 
 This paper presents a comprehensive analysis of Algorand's consensus message volume through a three-step methodology:
 
-1.  **Theoretical Profile Derivation:** First, we derive a *theoretical traffic profile* from first principles. Using core consensus parameters from the `go-algorand` source code and a November 23, 2025 snapshot of the mainnet stake distribution, we calculate the statistical expectation for the number of unique voters in an unoptimized, purely theoretical consensus round.
+1.  **Theoretical Profile Derivation:** First, we derive a *theoretical traffic profile* from first principles. Using core consensus parameters from the `go-algorand` source code and a November 24, 2025 snapshot of the mainnet stake distribution, we calculate the statistical expectation for the number of unique voters in an unoptimized, purely theoretical consensus round.
 
 2.  **Protocol Optimization Analysis:** Second, we explain how the live Algorand protocol optimizes this theoretical traffic. We detail the "early threshold termination" mechanism, where nodes suppress the propagation of votes once a quorum weight is achieved, effectively making subsequent votes for that phase obsolete and preventing them from congesting the network.
 
-3.  **Empirical Support for Theoretical Predictions:** Finally, we present and analyze empirical data from mainnet telemetry (`consensus_messages_2025-11-23.csv`). We show that the observed traffic is statistically lower than the theoretical profile and consistent with the behavior of the early termination optimization.
+3.  **Empirical Analysis of Observed Traffic:** Finally, we examine mainnet telemetry (`consensus_messages-20251124.csv`) to understand how real rounds compare with the theoretical profile. The on-time votes required to reach quorum are indeed lower than the theoretical expectation, but the *total* distinct cert and soft votes seen per round are significantly higher, revealing a discrepancy that the rest of the paper investigates.
 
-This analysis supports our theoretical model of consensus dynamics, showing that while the theoretical committee size is large, the practical message load is significantly and predictably smaller. This finding is topology-independent and provides a robust model for network capacity planning and estimating the impact of future protocol upgrades.
+This analysis juxtaposes the theoretical and empirical perspectives on Algorand's consensus traffic. The theoretical committee sizes remain a crucial baseline, but the telemetry shows that post-quorum messages continue to arrive in large numbers, suggesting that the real network carries more distinct messages per round than the idealized model predicts. Understanding this gap is now central to capacity planning and protocol analysis.
 
 ---
 # Part I: The Theoretical Traffic Profile
@@ -43,9 +43,9 @@ v10.NextCommitteeThreshold = 3838   // 77% of expected committee weight
 ```
 Protocol versions **v10 and above therefore run with `NumProposers = 20`**. The committee sizes (2990, 1500, 5000) are not enforced limits but rather statistical expectations for the total committee weight selected.
 
-### 1.2 Stake Distribution (Nov 23, 2025)
+### 1.2 Stake Distribution (Nov 24, 2025)
 
-The second input is the actual distribution of stake among online accounts. The file `algorand-consensus_2025-11-23.csv` provides a snapshot of every online participation key and its balance on this date.
+The second input is the actual distribution of stake among online accounts. The file `algorand-consensus-20251124.csv` provides a snapshot of every online participation key and its balance on this date.
 
 | Accounts | Cumulative stake |
 |----------|------------------|
@@ -65,11 +65,13 @@ While high-stake operators provide significant weight, the sheer number of these
 
 ## 2. The Mathematical Model for Voter Selection
 
-Algorand's VRF-based sortition algorithm uses binomial selection. For an account with stake fraction `s` and a committee of expected size `N`, the probability of being selected to produce at least one vote can be approximated by the Poisson formula:
+Algorand's VRF-based sortition draws a *weight* for every account using the binomial distribution implemented in `data/committee/credential.go` (which calls `github.com/algorand/sortition`). Given an account with stake `w`, total online stake `W`, and committee parameter `τ`, the sortition module samples `X ~ Binomial(w, τ/W)` and the node sends a single message with weight `X`. An account participates in a step iff `X ≥ 1`, producing the exact probability
 ```
-P(vote≥1 | s, N) = 1 - exp(-s × N)
+P(vote≥1 | w, τ, W) = 1 - (1 - τ / W)^{w}.
 ```
-This formula is accurate because `N` is small relative to the total stake. Summing this probability across every online account (from the CSV) gives the *expected number of unique voters* for any given step.
+This expression replaces the earlier Poisson approximation and matches the production code across all stake sizes, including large "whale" accounts. Because high-stake accounts routinely have `w × τ / W` in the dozens, the Poisson shortcut systematically underestimates unique voters, whereas the binomial probability is exact. Summing the probability across every online account (from the CSV snapshot) yields the *expected number of unique voters* for any given step.
+
+Applying this exact model to the November 24, 2025 stake snapshot produces the following expectations:
 
 The table below shows the result of this calculation for the main consensus steps:
 
@@ -91,9 +93,9 @@ Applying this model to each phase of a consensus round yields the following theo
 
 *   **Cert Vote Phase:** The theoretical expectation is **≈ 233 unique votes**, based on the calculation with `N=1,500`.
 
-*   **Next Vote Phase:** "Next" votes are a core liveness mechanism. They are cast when a round is taking too long to certify a block, allowing the network to formally agree to move on to the next round. While they can be sent ahead of time as part of general network pipelining, their primary role is not pipelining itself, but ensuring the chain does not stall. The theoretical expectation for the number of potential Next voters is ≈ 477, based on the calculation with N=5,000.
+*   **Next Vote Phase:** "Next" votes are a core liveness mechanism. They are cast when a round is taking too long to certify a block, allowing the network to formally agree to move on to the next round. While they can be sent ahead of time as part of general network pipelining, their primary role is not pipelining itself, but ensuring the chain does not stall. The theoretical expectation for the number of potential Next voters is ≈ 477, based on the calculation with N=5,000, but these votes are typically absent in healthy rounds because the liveness path rarely triggers.
 
-Summing the core components (Proposals, Soft, Cert) gives a total **theoretical core consensus traffic of ≈ 607 messages per round.**
+Summing the core components (Proposals, Soft, Cert) gives a total **theoretical core consensus traffic of ≈ 607 messages per round.** Including the liveness contingency adds another ≈ 477 potential Next votes, yielding ≈ 1,084 messages only in rounds that actually require the fallback.
 
 ---
 # Part II: Protocol Optimizations and Empirical Effects
@@ -135,10 +137,10 @@ These optimization mechanisms are enforced by the agreement layer, making them a
 *   **Topology Independence:** Because the filtering logic resides in the agreement layer, it functions identically across relay networks, P2P networks, and any hybrid configurations. The topology affects *how* messages are routed, but not *which* or *how many* are ultimately propagated.
 
 ---
-# Part III: Empirical Support for Theoretical Predictions
+# Part III: Empirical Analysis of Observed Behavior
 ---
 
-To complete the analysis, we collected empirical data from the Algorand mainnet to provide supporting evidence that our model of "theory + optimization" matches reality. This section describes our data collection methodology and presents the results.
+To complete the analysis, we collected empirical data from the Algorand mainnet to measure how closely the "theory + optimization" model matches reality and to pinpoint any systematic deviations. This section describes our data collection methodology and presents the results.
 
 ## 7. Data Collection Methodology
 
@@ -146,7 +148,7 @@ The empirical data was collected by instrumenting a standard Algorand participat
 
 **Note on node choice:** A participation node was chosen for data collection purely for operational convenience. The agreement layer's design ensures that all nodes—relay or non-relay—observe the same set of *distinct consensus messages* before reaching their local threshold, making any well-connected node suitable for measuring the theoretical message generation rate. The per-peer message flow is topology-independent.
 
-We "snooped" the consensus message traffic visible to this node over a 24-hour period on November 23, 2025. The instrumentation aggregated the number of unique consensus messages per round, recording them into the `consensus_messages_2025-11-23.csv` file.
+We "snooped" the consensus message traffic visible to this node over a 24-hour period on November 24, 2025. The instrumentation aggregated the number of unique consensus messages per round, recording them into the `consensus_messages-20251124.csv` file.
 
 Each row in this file represents a single consensus round and contains the following key data points used in this analysis:
 - `round`: The round number.
@@ -162,7 +164,7 @@ These three metrics provide a more granular breakdown of the data previously agg
 
 The collected data, analyzed with the newly added granularity, provides a more precise picture of the consensus dynamics and corrects a key hypothesis from the original analysis.
 
-As predicted in Part II, the observed *on-time* message counts are statistically lower than the theoretical maximums due to protocol optimizations. The table below uses the empirical data from the `consensus_messages.csv` file, which supersedes the older data used in the original version of this paper.
+As predicted in Part II, the observed *on-time* message counts are statistically lower than the theoretical maximums due to protocol optimizations. The table below uses the empirical data from `consensus_messages-20251124.csv`, which supersedes the older data used in the original version of this paper.
 
 | Phase       | Theoretical Expectation (Unique Voters) | Observed On-Time Votes (Empirical Range) | Consistent with Threshold Termination? |
 |-------------|-----------------------------------------|------------------------------------------|----------------------------------------|
@@ -188,6 +190,13 @@ The total number of unique messages *seen* by the node for each step is the sum 
 -   **Total Soft Votes Seen (Avg):** 305 (on-time) + 324 (late) = **629**
 -   **Total Cert Votes Seen (Avg):** 143 (on-time) + 192 (late) = **335**
 
+Across all 624 rounds in `consensus_messages-20251124.csv`, the node observed:
+
+*   **Proposals:** Avg ≈ 6.6 per round (well below the `NumProposers=20` expectation because only the lowest-credential proposals survive deduplication).
+*   **On-Time Core Votes:** Avg ≈ 305 soft + 143 cert = **≈ 448** (≈ 455 when the 6.6 proposals are included), reflecting the quorum-driven cutoff.
+*   **Total Core Votes:** Avg ≈ 629 soft + 335 cert = **≈ 964**, which together with ≈6.6 proposals yields **≈ 970 core messages per round**, about 1.6× the theoretical 607 baseline.
+*   **Next Votes:** Exactly zero on-time, pipelined, or late entries, confirming that the liveness mechanism did not trigger during the observation window.
+
 The fact that these totals are higher than the theoretical unique voter counts (354 for Soft, 233 for Cert) highlights a critical limitation of the theoretical model presented earlier. While the model predicts the expected number of *accounts* selected (which are assumed to map to unique messages), the observed count of unique *messages* on the network is significantly higher. This indicates that the theoretical model, in its current form, systematically underestimates the number of individual vote messages generated for these steps. The logger accurately counts unique messages, providing a more robust measure of actual message traffic.
 
 This corrected analysis provides a more robust model: the number of `on-time` votes is determined by the weight threshold, and the number of `late` votes represents the remaining messages from the rest of the committee that were "beaten" by the fast-moving node.
@@ -198,7 +207,7 @@ This corrected analysis provides a more robust model: the number of `on-time` vo
 
 ## 9. Summary and Key Findings
 
-This analysis provides two distinct but related views of consensus traffic: the theoretical potential and the empirically observed reality. The key finding is that for robust capacity planning, the theoretical generation rate is the most important metric, and the empirical data serves to validate the mechanics of the protocol model.
+This analysis provides two distinct but related views of consensus traffic: the theoretical potential and the empirically observed reality. The updated telemetry shows that while quorum formation follows the theoretical expectations, the total number of distinct messages per round can materially exceed the theoretical unique-voter counts, meaning the empirical view is no longer just corroborative but diagnostic of a modeling gap.
 
 ### 9.1 The Theoretical Model
 
@@ -209,50 +218,22 @@ The **Theoretical Message Count** represents the pure mathematical expectation f
 *   **Next Votes (Liveness):** ≈ 477
 *   **Total Theoretical Generation (Core + Next): ≈ 1084 messages per round**
 
-This view is useful for understanding the raw output of the sortition algorithm and forms the conservative basis for bandwidth planning.
+This view is useful for understanding the raw output of the sortition algorithm and forms the conservative basis for bandwidth planning. In steady-state rounds (no Next votes) the model therefore projects **≈607 core messages per round**, a figure now directly comparable to the ≈970 messages actually observed.
 
-### 9.2 Empirical Validation of the Model
+### 9.2 Empirical Insights and Open Questions
 
-The **Empirically Observed Traffic**, collected via instrumentation, validates the protocol's behavior and optimizations:
-1.  **Threshold Termination is Confirmed:** The number of *on-time* votes observed by the node (Avg: ~305 Soft, ~143 Cert) is consistently lower than the theoretical maximum. This proves the efficiency of the threshold termination mechanism, which halts the processing of votes once a weight quorum is achieved.
-2.  **Source of Late Traffic is Identified:** The granular `late_` vote metrics confirm that messages arriving after a step is complete are the remaining `soft` and `cert` votes from the committee, not `Next` votes as previously hypothesized. This gives a clearer picture of message flow over time.
+The **Empirically Observed Traffic**, collected via instrumentation, yields three conclusions:
+1.  **Threshold Termination is Confirmed:** The number of *on-time* votes observed by the node (Avg: ~305 Soft, ~143 Cert) is consistently lower than the theoretical maximum, demonstrating that quorum weight, not committee size, determines when a step stops relaying votes.
+2.  **Source of Late Traffic is Identified:** The granular `late_` vote metrics confirm that messages arriving after a step is complete are the remaining `soft` and `cert` votes from the theoretical committee, not `Next` votes as previously hypothesized.
+3.  **Total Messages Exceed Theory:** When late votes are included, the node processes ~629 soft and ~335 cert votes per round on average—materially higher than the ≈354/233 unique-voter expectations. This indicates that the current theoretical model underestimates real message volume, motivating further investigation into proposal-level counting, deduplication semantics, or other instrumentation factors.
 
-For practical bandwidth modeling and capacity planning, one should use the **Total Theoretical Generation (~1084 messages/round)**, as this represents the total number of messages the network must be prepared to handle, regardless of whether an individual node processes them as "on-time" or "late".
+For practical bandwidth modeling, the theoretical generation rate remains the conservative lower bound, but capacity planning must now consider the empirically measured totals as evidence that the network routinely carries more distinct messages than the baseline projection.
 
-## 10. Implications for Post-Quantum Upgrades
+## 10. Conclusion
 
-For Falcon Envelope bandwidth calculations, the **Total Theoretical Generation of ~1,084 messages per round** (composed of ~607 core consensus votes and ~477 liveness-related Next votes) provides the most robust and appropriate basis for modeling.
+This paper now presents a two-part narrative: the theoretical derivation establishes the minimum number of unique voters implied by the protocol parameters and stake snapshot, while the empirical measurements show that the network often relays substantially more distinct votes per round than the theoretical model predicts. Threshold termination and late-vote composition behave exactly as specified, but the observed surplus of cert and soft votes highlights an unresolved discrepancy that must be explained before the model can be considered complete.
 
-While the empirical analysis shows that any single node only processes a fraction of these as "on-time" votes, the network as a whole must still bear the load of the entire generated message set. Using the theoretical maximum is the correct, conservative approach because it is independent of observational artifacts (like a node's position) and represents the total number of messages the network must be prepared to relay in a given round.
-
-Using the theoretical maximum ensures:
-- **Conservative capacity planning**: Provisions for the total generated traffic, not just what one node sees as useful.
-- **Reproducible estimates**: Anyone can verify the projection from first principles using the protocol parameters.
-- **Topology independence**: The calculation is not skewed by a single node's perspective or network position.
-
-### 10.1 Per-Peer Bandwidth Model
-
-The theoretical message count represents the **per-peer traffic flow** that any two nodes (relay-to-relay, relay-to-participation, or participation-to-participation) should model in the unoptimized case. This is not aggregate bandwidth across all peer connections, but rather the bandwidth for a single peer relationship.
-
-**Key insight:** The ~1,084 messages/round figure models the flow of *distinct consensus messages* between any pair of connected nodes, regardless of node type. The total aggregate bandwidth a node experiences scales with its number of peer connections, but the per-peer flow remains constant.
-
-**Bandwidth projections (per-peer basis):**
-- **Per-envelope overhead**: 1.3-1.8 KB (Falcon-1024 signature + metadata)
-- **Daily bandwidth (envelopes only)**: 1,084 × 1.5 KB × 30,316 rounds/day ≈ **49 GB/day**
-- **Range**: ~42-59 GB/day (using 1.3-1.8 KB envelope sizes)
-- **Total bandwidth with baseline (baseline + envelopes)**: **~45-67 GB/day**, assuming today's 3-8 GB/day baseline continues
-
-**Note:** Actual aggregate bandwidth experienced by a node depends on its number of peer connections. A relay node with many peers will experience proportionally higher aggregate traffic, while a participation node with fewer peers will experience lower aggregate traffic. However, the per-peer message flow remains consistent across node types.
-
-## 11. Conclusion
-
-This paper provides a robust model for understanding Algorand's consensus traffic through theoretical derivation and empirical validation. The **Total Theoretical Generation of ~1,084 messages per round** (including core consensus and liveness votes) represents the correct, conservative upper bound for total network traffic, derived from first principles.
-
-The empirical data, enhanced with granular logging, validates the core mechanics of the protocol. It confirms that "threshold termination" drastically reduces the number of *on-time* votes needed by any single node, and it correctly identifies the remaining "late" traffic as soft and cert votes arriving after quorum is met.
-
-**This theoretical figure models the per-peer message flow between any two connected nodes in the network**, regardless of whether they are relay nodes, participation nodes, or any other node type. The aggregate bandwidth a node experiences scales with its number of peer connections, but the per-peer traffic flow remains constant and topology-independent.
-
-For capacity planning and protocol upgrades, the theoretical maximum provides a conservative, reproducible upper bound that is topology-independent and verifiable by anyone with access to the protocol parameters and stake distribution. The close alignment between theory (~1,084) and observation (~1,077) supports the conclusion that this theoretical calculation accurately models real network behavior while providing appropriate safety margin for worst-case scenarios.
+For capacity planning and future protocol upgrades, the theoretical maximum remains a reproducible baseline. However, operators should treat the empirically measured totals (~629 soft, ~335 cert, ~970 core messages) as the practical indicator of present-day network load, and further analysis is required to determine whether this surplus stems from multi-proposal voting, logging methodology, or deeper protocol dynamics.
 
 ---
 ## Appendix: Source Code References
