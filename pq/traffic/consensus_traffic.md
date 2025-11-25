@@ -191,18 +191,20 @@ On-time message ratios match these numbers because each participant contributes 
 
 Because the theoretical expectation is constant across rounds (≈354 soft, ≈233 cert), scatterplots of observed on-time unique counts versus theory collapse to vertical bands centered on those constants. The ratios above therefore convey the same information more directly: observed points cluster tightly around the theoretical line for on-time uniques, while total-unique and total-message ratios (Sections 8.4–8.5) show the amplification once trailing proposals and duplicate deliveries are included.
 
+The lower on-time ratio for cert (0.60× vs. 0.885× for soft) reflects the cert committee’s smaller expected size (1,500 vs. 2,990) combined with the whale-heavy stake distribution: the same high-stake accounts supply a larger fraction of the 1,112 cert quorum weight, so fewer total accounts need to respond before the threshold is hit.
+
 ### 8.3 Absence of Next Votes
 
 The Next/liveness step never triggered during this capture window: all `next_*` columns remain zero. This indicates that every observed round completed soft and cert voting without invoking the liveness fallback, so the theoretical Next committee expectation (≈476 voters) remains a contingency for worst-case planning rather than an observed load.
 
-### 8.4 Total Unique Amplification (Trailing Proposals)
+### 8.4 Total Unique Amplification (Trailing Proposals + Cross-Round Stragglers)
 
-After quorum, additional proposals continue to attract votes. Counting all unique senders per round yields:
+Counting all unique senders attributed to a round yields:
 
-- **Soft:** Mean total unique ratio **1.385×** theory (±0.0037 s.e.; median 1.374×; 99th percentile 1.636×). This ≈32% excess reflects ≈1.12 trailing proposals per round.
-- **Cert:** Mean total unique ratio **1.142×** theory (±0.0041 s.e.; median 1.131×; 99th percentile 1.396×). Certification experiences ≈1.09 trailing proposals.
+- **Soft:** Mean total unique ratio **1.385×** theory (±0.0037 s.e.; median 1.374×; 99th percentile 1.636×).
+- **Cert:** Mean total unique ratio **1.142×** theory (±0.0041 s.e.; median 1.131×; 99th percentile 1.396×).
 
-Thus even healthy rounds exhibit proposal fragmentation: different subsets of the committee vote for different candidates before the network converges on the winner.
+This metric intentionally exceeds the single-round committee size because the logger attributes votes to the round in which they are received, not the round in which they were cast. “Total unique senders for round R” therefore includes both the on-time voters from round R’s committee and stragglers from round R−1 that arrive while round R is executing. It is an operational load measure—how many distinct votes the node must ingest—rather than evidence that more than ~354/~233 accounts were selected by sortition. Within a given round, the additional proposals that survive past quorum ensure that many of those stragglers are votes for losing candidates, but the primary driver of the >1.0 ratios is this cross-round attribution.
 
 ### 8.5 Message-Level Amplification
 
