@@ -1,10 +1,10 @@
-# Algorand Consensus Message Quantity Analysis
+# Algorand Consensus Traffic Analysis
 
 **A Three-Step Analysis: Theory, Optimization, and Empirical Support**
 
 ---
 
-This paper presents a comprehensive analysis of Algorand's consensus message volume through a three-step methodology:
+This paper presents a comprehensive analysis of Algorand's consensus traffic through a three-step methodology:
 
 1.  **Theoretical Profile Derivation:** First, we derive a *theoretical traffic profile* from first principles. Using core consensus parameters from the `go-algorand` source code and a November 24, 2025 snapshot of the mainnet stake distribution, we calculate the statistical expectation for the number of unique voters in an unoptimized, purely theoretical consensus round.
 
@@ -161,8 +161,6 @@ Each row in this file represents a single consensus round and contains the follo
 - `soft_total_unique_senders` / `cert_total_unique_senders`: Number of distinct accounts observed once late votes are included.
 - `soft_periods` / `cert_periods`: Number of distinct periods whose votes were seen for that step within the round.
 - `round_duration_ms`, `in_peers`, `out_peers`, `bundle_votes`: Timing and peer metadata captured at certification.
-
-These three metrics provide a more granular breakdown of the data previously aggregated under the single `obsolete_votes` field.
 
 To support per-proposal analysis, the logger also writes `consensus_vote_details.csv`, which emits one row per `(round, step, period, proposal)` tuple. Each row lists whether the votes were on-time or late, how many distinct senders supported that proposal, and how many total messages were relayed for it. This auxiliary file makes it possible to determine whether additional periods or multiple competing proposals explain the gap between theoretical and observed totals.
 
