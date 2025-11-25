@@ -144,7 +144,7 @@ To complete the analysis, we collected empirical data from the Algorand mainnet 
 
 ## 7. Data Collection Methodology
 
-The empirical data was collected by instrumenting a standard Algorand participation node running in a **P2P hybrid mode**. The node was connected to the mainnet with a typical configuration of **~4 relay nodes** and **~60 P2P peers**.
+The empirical data was collected by instrumenting a standard Algorand participation node running in a **P2P hybrid mode**. The node was connected to the mainnet with a typical configuration of **~4 relay nodes** and **~60 P2P peers**. The core message counts cover 624 rounds within `consensus_messages-20251124.csv`, while the per-proposal detail log (`consensus_vote_details.csv`) spans 337 rounds (the detail logger was introduced partway through the capture window).
 
 **Note on node choice:** A participation node was chosen for data collection purely for operational convenience. The agreement layer's design ensures that all nodes—relay or non-relay—observe the same set of *distinct consensus messages* before reaching their local threshold, making any well-connected node suitable for measuring the theoretical message generation rate. The per-peer message flow is topology-independent.
 
@@ -234,7 +234,7 @@ The **Empirically Observed Traffic**, collected via instrumentation, yields thre
 2.  **Source of Late Traffic is Identified:** The granular `late_` vote metrics confirm that messages arriving after a step is complete are the remaining `soft` and `cert` votes from the theoretical committee, not `Next` votes as previously hypothesized.
 3.  **Total Messages Exceed Theory:** When late votes are included, the node processes ~629 soft and ~335 cert votes per round on average—materially higher than the ≈354/233 unique-voter expectations. The per-proposal detail proves this isn’t double-counting the same accounts: the extra traffic is dominated by losing proposals whose committees keep voting after quorum has already been reached for the winner. The theoretical model remains accurate for predicting *participants*; the higher message totals reflect network amplification (duplicate deliveries plus competing proposals) that must be considered when modeling raw traffic.
 
-For practical bandwidth modeling, operators should use the empirically measured totals (~629 soft, ~335 cert, ~970 core messages) rather than the theoretical baseline (~607), since the ≈1.6× amplification created by competing proposals and redundant delivery is a persistent network characteristic.
+For practical bandwidth modeling, operators should use the empirically measured totals (~629 soft, ~335 cert, ~970 core messages) rather than the theoretical baseline (~607), since the ≈1.6× amplification created by competing proposals and redundant delivery is a persistent network characteristic (per the 624-round summary and 337-round detail logs).
 
 ## 10. Conclusion
 
