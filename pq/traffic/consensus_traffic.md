@@ -10,7 +10,7 @@ This paper presents a comprehensive analysis of Algorand's consensus traffic thr
 
 2.  **Protocol Optimization Analysis:** Second, we explain how the live Algorand protocol optimizes this theoretical traffic. We detail the "early threshold termination" mechanism, where nodes suppress the propagation of votes once a quorum weight is achieved, effectively making subsequent votes for that phase obsolete and preventing them from congesting the network.
 
-3.  **Empirical Analysis of Observed Traffic:** Finally, we examine mainnet telemetry (`consensus_messages-20251124.csv`) to understand how real rounds compare with the theoretical profile. The on-time votes required to reach quorum are indeed lower than the theoretical expectation due to threshold termination, while the *total* message count per round is higher because of network amplification (competing proposals and redundant delivery). The empirical data therefore validates the theoretical committee-size model while quantifying these real-world amplification factors.
+3.  **Empirical Analysis of Observed Traffic:** Finally, we examine mainnet telemetry spanning 32,531 consecutive rounds to understand how real rounds compare with the theoretical profile. The on-time votes required to reach quorum are indeed lower than the theoretical expectation due to threshold termination, while the *total* message count per round is higher because of network amplification (competing proposals and redundant delivery). The empirical data therefore validates the theoretical committee-size model while quantifying these real-world amplification factors.
 
 This analysis juxtaposes the theoretical and empirical perspectives on Algorand's consensus traffic. The theoretical committee sizes accurately predict unique participants, while the telemetry quantifies network amplification factors: competing proposals cause voters to split across multiple candidates, and redundant delivery paths increase message counts beyond unique sender counts. Understanding these amplification effects is essential for capacity planning and protocol analysis.
 
@@ -87,7 +87,7 @@ It is important to understand that these numbers are the pure, unoptimized, stat
 
 Applying this model to each phase of a consensus round yields the following theoretical message counts.
 
-*   **Proposal Phase:** The theoretical expectation is **≈ 20 proposals**, based directly on the `NumProposers=20` protocol parameter.
+*   **Proposal Phase:** The theoretical expectation is **≈ 20 proposals**, based directly on the `NumProposers=20` protocol parameter. However, observed proposal counts are much lower (mean ~6-7 per round) due to a cross-phase optimization: the proposal and soft-vote phases overlap, and once a node observes soft-vote quorum for a leading proposal, its `proposalTracker` freezes. Subsequent proposals may still arrive at the network layer but are classified as obsolete and not relayed further. Since relays and P2P nodes rely on agreement-layer callbacks (`Relay` vs `Ignore`) to decide whether to forward a message, this optimization cascades rapidly through the network, reducing proposal traffic by approximately 70%.
 
 *   **Soft Vote Phase:** The theoretical expectation is **≈ 354 unique votes**, based on the calculation with `N=2,990`.
 
@@ -116,8 +116,8 @@ The `reachesQuorum` function in `agreement/types.go` checks if the accumulated v
 This mechanism has a dramatic effect on traffic. Because a small number of high-stake accounts can contribute a large amount of weight, quorum is often reached long before all ~354 (Soft) or ~233 (Cert) unique voters have been heard from.
 
 This explains the discrepancy between the theoretical numbers and the observed telemetry:
-*   **Soft Votes:** Theory predicts ≈ 354 voters, but telemetry typically shows **280-340** observed votes before the 2,267 weight threshold is met.
-*   **Cert Votes:** Theory predicts ≈ 233 voters, but telemetry consistently shows only **101-186** observed votes before the 1,112 weight threshold is met (matching the empirical ranges in Section 8).
+*   **Soft Votes:** Theory predicts ≈ 354 voters, but telemetry typically shows **280-340** observed votes before the 2,267 weight threshold is met (mean ~308, see Section 8).
+*   **Cert Votes:** Theory predicts ≈ 233 voters, but telemetry consistently shows only **110-185** observed votes before the 1,112 weight threshold is met (mean ~146, see Section 8).
 
 The optimization effectively "trims the tail" of the theoretical distribution, resulting in a statistically lower number of observed messages.
 
@@ -144,29 +144,24 @@ To complete the analysis, we collected empirical data from the Algorand mainnet 
 
 ## 7. Data Collection Methodology
 
-The empirical data was collected by instrumenting a standard Algorand participation node running in a **P2P hybrid mode**. The node was connected to the mainnet with a typical configuration of **~4 relay nodes** and **~60 P2P peers**. The core message counts cover 624 rounds within `consensus_messages-20251124.csv`, while the per-proposal detail log (`consensus_vote_details.csv`) spans 337 rounds (the detail logger was introduced partway through the capture window).
+The empirical data was collected by instrumenting a standard Algorand participation node running in a **P2P hybrid mode**. The node was connected to the mainnet with a typical configuration of **~4 relay nodes** and **~55 P2P peers**. The dataset spans **32,531 consecutive rounds** (rounds 55874383 to 55906947), representing approximately 24 hours of continuous mainnet operation on November 24–25, 2025.
 
 **Note on node choice:** A participation node was chosen for data collection purely for operational convenience. The agreement layer's design ensures that all nodes—relay or non-relay—observe the same set of *distinct consensus messages* before reaching their local threshold, making any well-connected node suitable for measuring the theoretical message generation rate. The per-peer message flow is topology-independent.
 
-We "snooped" the consensus message traffic visible to this node over a 24-hour period on November 24, 2025. The instrumentation aggregated the number of unique consensus messages per round, recording them into the `consensus_messages-20251124.csv` file.
+**Note on node position:** The instrumented node was well-connected and consistently on the "leading edge" of consensus—it advanced to each new round quickly relative to the network. This is evidenced by the near-absence of pipelined votes (votes for round N+1 arriving while still processing round N): out of 32,531 rounds, pipelined votes were observed in only 12 rounds. A slower or less-connected node would see more pipelining but the same aggregate message counts.
 
-Each row in this file represents a single consensus round and contains the following key data points used in this analysis:
+The instrumentation logged consensus message traffic into a unified CSV file with one row per round containing:
 - `round`: The round number.
-- `soft_votes`: The total count of unique soft votes observed by the node in that round.
-- `cert_votes`: The total count of unique cert votes observed by the node in that round.
-- `late_soft_votes`: The count of unique soft votes that were received for a round that was already completed.
-- `late_cert_votes`: The count of unique cert votes that were received for a round that was already completed.
-- `late_next_votes`: The count of unique "Next" votes that were received for a round that was already completed.
-- `soft_unique_senders` / `cert_unique_senders`: Number of distinct accounts required to reach quorum during the round.
-- `soft_total_unique_senders` / `cert_total_unique_senders`: Number of distinct accounts observed once late votes are included.
-- `soft_periods` / `cert_periods`: Number of distinct periods whose votes were seen for that step within the round.
-- `round_duration_ms`, `in_peers`, `out_peers`, `bundle_votes`: Timing and peer metadata captured at certification.
-
-To support per-proposal analysis, the logger also writes `consensus_vote_details.csv`, which emits one row per `(round, step, period, proposal)` tuple. Each row lists whether the votes were on-time or late, how many distinct senders supported that proposal, and how many total messages were relayed for it. This auxiliary file makes it possible to determine whether additional periods or multiple competing proposals explain the gap between theoretical and observed totals.
+- `soft_votes` / `cert_votes`: Count of unique on-time votes observed before quorum.
+- `late_soft_votes` / `late_cert_votes`: Count of unique votes received after the step completed.
+- `soft_unique_senders` / `cert_unique_senders`: Distinct accounts in on-time votes.
+- `soft_total_unique_senders` / `cert_total_unique_senders`: Distinct accounts including late votes.
+- `soft_periods` / `cert_periods`: Number of distinct periods observed (1 = healthy round).
+- `round_duration_ms`, `in_peers`, `out_peers`, `bundle_votes`: Timing and peer metadata.
 
 ## 8. Empirical Committee Realization and Amplification Metrics
 
-The empirical dataset (337 rounds with per-proposal detail and 624 rounds in the summary logger) quantifies how the live network instantiates the theoretical committees and where message amplification arises. We structure the findings into five measurements.
+The 32,531-round dataset quantifies how the live network instantiates the theoretical committees and where message amplification arises. We structure the findings into five measurements.
 
 ### 8.1 Theoretical Committee Expectations
 
@@ -182,14 +177,14 @@ These values incorporate the actual stake distribution rather than the nominal c
 
 On-time participation stays below the theoretical expectation because quorum weight is met before the full committee responds:
 
-- **Soft:** Mean on-time unique ratio **0.885×** (±0.0023 s.e.; median 0.882×; 99th percentile 0.994×).
-- **Cert:** Mean on-time unique ratio **0.600×** (±0.0029 s.e.; median 0.602×; 99th percentile 0.725×).
+- **Soft:** Mean on-time unique ratio **0.871×** (±0.0003 s.e.; median 0.873×; 99th percentile 0.984×).
+- **Cert:** Mean on-time unique ratio **0.627×** (±0.0004 s.e.; median 0.632×; 99th percentile 0.791×).
 
 On-time message ratios match these numbers because each participant contributes one vote before quorum is satisfied. This validates that the theoretical committee-size model correctly predicts *who* participates in each step.
 
 Because the theoretical expectation is constant across rounds (≈354 soft, ≈233 cert), scatterplots of observed on-time unique counts versus theory collapse to vertical bands centered on those constants. The ratios above therefore convey the same information more directly: observed points cluster tightly around the theoretical line for on-time uniques, while total-unique and total-message ratios (Sections 8.4–8.5) show the amplification once trailing proposals and duplicate deliveries are included.
 
-The lower on-time ratio for cert (0.60× vs. 0.885× for soft) reflects the cert committee’s smaller expected size (1,500 vs. 2,990) combined with the whale-heavy stake distribution: the same high-stake accounts supply a larger fraction of the 1,112 cert quorum weight, so fewer total accounts need to respond before the threshold is hit.
+The lower on-time ratio for cert (0.63× vs. 0.87× for soft) reflects the cert committee's smaller expected size (1,500 vs. 2,990) combined with the whale-heavy stake distribution: the same high-stake accounts supply a larger fraction of the 1,112 cert quorum weight, so fewer total accounts need to respond before the threshold is hit.
 
 ### 8.3 Absence of Next Votes
 
@@ -199,39 +194,39 @@ The Next/liveness step never triggered during this capture window: all `next_*` 
 
 Counting all unique senders attributed to a round yields:
 
-- **Soft:** Mean total unique ratio **1.385×** theory (±0.0037 s.e.; median 1.374×; 99th percentile 1.636×).
-- **Cert:** Mean total unique ratio **1.142×** theory (±0.0041 s.e.; median 1.131×; 99th percentile 1.396×).
+- **Soft:** Mean total unique ratio **1.346×** theory (±0.0004 s.e.; median 1.346×; 99th percentile 1.476×).
+- **Cert:** Mean total unique ratio **1.157×** theory (±0.0005 s.e.; median 1.157×; 99th percentile 1.359×).
 
-This metric intentionally exceeds the single-round committee size because the logger attributes votes to the round in which they are received, not the round in which they were cast. “Total unique senders for round R” therefore includes both the on-time voters from round R’s committee and stragglers from round R−1 that arrive while round R is executing. It is an operational load measure—how many distinct votes the node must ingest—rather than evidence that more than ~354/~233 accounts were selected by sortition. Within a given round, the additional proposals that survive past quorum ensure that many of those stragglers are votes for losing candidates, but the primary driver of the >1.0 ratios is this cross-round attribution.
+This metric intentionally exceeds the single-round committee size because the logger attributes votes to the round in which they are received, not the round in which they were cast. "Total unique senders for round R" therefore includes both the on-time voters from round R's committee and stragglers from round R−1 that arrive while round R is executing. It is an operational load measure—how many distinct votes the node must ingest—rather than evidence that more than ~354/~233 accounts were selected by sortition. Within a given round, the additional proposals that survive past quorum ensure that many of those stragglers are votes for losing candidates, but the primary driver of the >1.0 ratios is this cross-round attribution.
 
 ### 8.5 Message-Level Amplification
 
-Counting all messages (on-time + pipelined + late) further amplifies load:
+Counting all messages (on-time + late) further amplifies load:
 
-- **Soft:** Mean total message ratio **1.838×** theory (±0.0050 s.e.; median 1.823×; 99th percentile 2.173×).
-- **Cert:** Mean total message ratio **1.439×** theory (±0.0050 s.e.; median 1.428×; 99th percentile 1.750×).
+- **Soft:** Mean total message ratio **1.791×** theory (±0.0005 s.e.; median 1.792×; 99th percentile 1.967×).
+- **Cert:** Mean total message ratio **1.462×** theory (±0.0006 s.e.; median 1.462×; 99th percentile 1.712×).
 
-These ≈1.6× factors explain why the network relays ~970 core messages per round instead of the theoretical 607.
+These ≈1.6× factors explain why the network relays ~980 core messages per round instead of the theoretical 607.
 
 ### 8.6 Duplication Factor (Messages per Sender)
 
 Redundant gossip and retransmissions add ≈30% overhead per participant even after deduplication by sender:
 
-- **Soft:** Mean duplication factor **1.33×** (±0.0010 s.e.; median 1.33×; 99th percentile 1.37×).
-- **Cert:** Mean duplication factor **1.26×** (±0.0011 s.e.; median 1.26×; 99th percentile 1.31×).
+- **Soft:** Mean duplication factor **1.33×** (±0.0001 s.e.; median 1.33×; 99th percentile 1.38×).
+- **Cert:** Mean duplication factor **1.26×** (±0.0001 s.e.; median 1.26×; 99th percentile 1.32×).
 
 ### 8.7 Percentile Reference Table
 
 | Phase | Metric | Mean | P50 | P90 | P95 | P99 |
 |-------|--------|------|-----|-----|-----|-----|
-| Soft  | Unique ÷ theory (on-time)  | 0.885× | 0.882× | 0.941× | 0.961× | 0.994× |
-| Soft  | Unique ÷ theory (total)    | 1.385× | 1.374× | 1.456× | 1.512× | 1.636× |
-| Soft  | Messages ÷ theory (total)  | 1.838× | 1.823× | 1.931× | 2.011× | 2.173× |
-| Soft  | Duplication factor (total) | 1.327× | 1.326× | 1.352× | 1.357× | 1.374× |
-| Cert  | Unique ÷ theory (on-time)  | 0.600× | 0.602× | 0.671× | 0.688× | 0.725× |
-| Cert  | Unique ÷ theory (total)    | 1.142× | 1.131× | 1.234× | 1.283× | 1.396× |
-| Cert  | Messages ÷ theory (total)  | 1.439× | 1.428× | 1.553× | 1.618× | 1.750× |
-| Cert  | Duplication factor (total) | 1.260× | 1.258× | 1.287× | 1.295× | 1.310× |
+| Soft  | Unique ÷ theory (on-time)  | 0.871× | 0.873× | 0.936× | 0.953× | 0.984× |
+| Soft  | Unique ÷ theory (total)    | 1.346× | 1.346× | 1.411× | 1.430× | 1.476× |
+| Soft  | Messages ÷ theory (total)  | 1.791× | 1.792× | 1.880× | 1.905× | 1.967× |
+| Soft  | Duplication factor (total) | 1.331× | 1.331× | 1.355× | 1.362× | 1.376× |
+| Cert  | Unique ÷ theory (on-time)  | 0.627× | 0.632× | 0.723× | 0.744× | 0.791× |
+| Cert  | Unique ÷ theory (total)    | 1.157× | 1.157× | 1.260× | 1.290× | 1.359× |
+| Cert  | Messages ÷ theory (total)  | 1.462× | 1.462× | 1.596× | 1.634× | 1.712× |
+| Cert  | Duplication factor (total) | 1.264× | 1.264× | 1.294× | 1.302× | 1.319× |
 
 (Next votes remain zero throughout the capture; see §8.3.)
 
@@ -245,7 +240,11 @@ Redundant gossip and retransmissions add ≈30% overhead per participant even af
 
 This mapping ties each causal mechanism to the statistic that quantifies it in the telemetry.
 
-### 8.9 Takeaway
+### 8.9 Distribution Stability
+
+The close alignment of mean and median values across all metrics (within 1%), combined with tight 99th percentile bounds (typically within 15% of the mean), demonstrates that Algorand's consensus traffic operates in a stable steady-state. Outlier rounds with amplification exceeding 3× occur but represent less than 0.1% of observations. This confirms that the measured amplification factors are reliable planning baselines rather than artifacts of sampling variance.
+
+### 8.10 Takeaway
 
 Thus, the discrepancy between theoretical and observed message volume is *not* due to higher-than-expected participation. On-time unique participation closely tracks the theoretical committees. The higher message counts arise from two amplification mechanisms:
 1. **Multi-proposal contention:** trailing proposals continue to receive votes, so the union of unique senders exceeds the single-proposal expectation.
@@ -270,22 +269,22 @@ The **Theoretical Message Count** represents the pure mathematical expectation f
 *   **Next Votes (Liveness):** ≈ 477
 *   **Total Theoretical Generation (Core + Next): ≈ 1084 messages per round**
 
-This view is useful for understanding the raw output of the sortition algorithm and forms the conservative basis for bandwidth planning. In steady-state rounds (no Next votes) the model therefore projects **≈607 core messages per round**, a figure now directly comparable to the ≈970 messages actually observed.
+This view is useful for understanding the raw output of the sortition algorithm and forms the conservative basis for bandwidth planning. In steady-state rounds (no Next votes) the model therefore projects **≈607 core messages per round**, a figure now directly comparable to the ~980 messages actually observed.
 
 ### 9.2 Empirical Validation and Network Amplification
 
-The **Empirically Observed Traffic**, collected via instrumentation, yields three conclusions:
-1.  **Threshold Termination is Confirmed:** The number of *on-time* votes observed by the node (Avg: ~305 Soft, ~143 Cert) is consistently lower than the theoretical maximum, demonstrating that quorum weight, not committee size, determines when a step stops relaying votes.
+The **Empirically Observed Traffic**, collected via instrumentation across 32,531 rounds, yields three conclusions:
+1.  **Threshold Termination is Confirmed:** The number of *on-time* votes observed by the node (Avg: ~308 Soft, ~146 Cert) is consistently lower than the theoretical maximum, demonstrating that quorum weight, not committee size, determines when a step stops relaying votes.
 2.  **Source of Late Traffic is Identified:** The granular `late_` vote metrics confirm that messages arriving after a step is complete are the remaining `soft` and `cert` votes from the theoretical committee, not `Next` votes as previously hypothesized.
-3.  **Total Messages Exceed Theory:** When late votes are included, the node processes ~629 soft and ~335 cert votes per round on average—materially higher than the ≈354/233 unique-voter expectations. The per-proposal detail proves this isn’t double-counting the same accounts: the extra traffic is dominated by losing proposals whose committees keep voting after quorum has already been reached for the winner. The theoretical model remains accurate for predicting *participants*; the higher message totals reflect network amplification (duplicate deliveries plus competing proposals) that must be considered when modeling raw traffic.
+3.  **Total Messages Exceed Theory:** When late votes are included, the node processes ~634 soft and ~340 cert votes per round on average—materially higher than the ≈354/233 unique-voter expectations. The extra traffic is dominated by losing proposals whose committees keep voting after quorum has already been reached for the winner. The theoretical model remains accurate for predicting *participants*; the higher message totals reflect network amplification (duplicate deliveries plus competing proposals) that must be considered when modeling raw traffic.
 
-For practical bandwidth modeling, operators should use the empirically measured totals (~629 soft, ~335 cert, ~970 core messages) rather than the theoretical baseline (~607), since the ≈1.6× amplification created by competing proposals and redundant delivery is a persistent network characteristic (per the 624-round summary and 337-round detail logs).
+For practical bandwidth modeling, operators should use the empirically measured totals (~634 soft, ~340 cert, ~980 core messages) rather than the theoretical baseline (~607), since the ≈1.6× amplification created by competing proposals and redundant delivery is a persistent network characteristic confirmed across 32,531 rounds.
 
 ## 10. Conclusion
 
-This paper now presents a two-part narrative: the theoretical derivation establishes the expected number of *unique voters* implied by the protocol parameters and stake snapshot (a prediction validated by telemetry), while the empirical measurements show that the network often relays more *messages* per round because losing proposals and redundant deliveries keep circulating after quorum. Threshold termination and late-vote composition behave exactly as specified; the surplus cert and soft messages simply reflect network amplification rather than a flaw in the committee-size model.
+This paper presents a two-part narrative: the theoretical derivation establishes the expected number of *unique voters* implied by the protocol parameters and stake snapshot (a prediction validated by telemetry), while the empirical measurements show that the network often relays more *messages* per round because losing proposals and redundant deliveries keep circulating after quorum. Threshold termination and late-vote composition behave exactly as specified; the surplus cert and soft messages simply reflect network amplification rather than a flaw in the committee-size model.
 
-For capacity planning and future protocol upgrades, the theoretical maximum remains a reproducible baseline for unique participants. Operators should treat the empirically measured totals (~629 soft, ~335 cert, ~970 core messages) as the practical indicator of message load, recognizing that they include roughly one extra proposal’s worth of traffic per step due to honest-but-late votes from competing candidates.
+For capacity planning and future protocol upgrades, the theoretical maximum remains a reproducible baseline for unique participants. Operators should treat the empirically measured totals (~634 soft, ~340 cert, ~980 core messages) as the practical indicator of message load, recognizing that they include roughly one extra proposal's worth of traffic per step due to honest-but-late votes from competing candidates.
 
 ---
 ## Appendix: Source Code References
