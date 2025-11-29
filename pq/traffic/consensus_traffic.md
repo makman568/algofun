@@ -438,33 +438,93 @@ Across 1,001 rounds, the minimum cert weight observed was **exactly 1,112**—th
 
 ## Part IV: Single-Channel Traffic Profile
 
-### 10. Per-Round Message Summary
+### 10. Vote Compression (vpack)
 
-| Component | Messages/Round | ~Bytes Each | KB/Round |
-|-----------|----------------|-------------|----------|
-| Soft votes | 303 | 500 | 152 |
-| Cert votes | 144 | 500 | 72 |
-| Proposals | 3.3 | 2,000 | 7 |
-| Cert bundle | 1 | 10,000 | 10 |
-| **Total** | **~451** | | **~241** |
+Algorand uses a custom compression scheme called **vpack** for consensus votes, implemented in `go-algorand/network/vpack/`. This is not generic compression—it's a domain-specific encoding that strips msgpack formatting and field names.
 
-### 11. Bandwidth Estimate
+#### 10.1 Compression Layers
+
+Vote compression operates in two layers:
+
+| Layer | Tag | Description |
+|-------|-----|-------------|
+| **Stateless** | `AV` | Strips msgpack field names, uses bitmask for optional fields |
+| **Stateful** | `VP` | Adds lookup table for repeated values across votes |
+
+From `msgCompressor.go`:
+- Stateless compression is applied to all votes
+- Stateful compression (when negotiated) further compresses by tracking common values between votes on the same connection
+
+#### 10.2 Vote Structure and Size
+
+From `vpack.go`, a vote contains 14 fields (8 required, 6 optional):
+
+**Required fields:**
+- `cred.pf` — VRF proof (80 bytes)
+- `r.rnd` — Round number (varint, typically 3-4 bytes)
+- `r.snd` — Sender address (32 bytes)
+- `sig.p`, `sig.p1s`, `sig.p2`, `sig.p2s`, `sig.s` — One-time signature components (32+64+32+64+64 = 256 bytes)
+
+**Optional fields (presence indicated by bitmask):**
+- `r.per` — Period (varint)
+- `r.step` — Step (varint)
+- `r.prop.dig`, `r.prop.encdig`, `r.prop.oper`, `r.prop.oprop` — Proposal metadata
+
+#### 10.3 Size Constants (from source)
+
+```go
+// go-algorand/network/vpack/vpack.go
+MaxMsgpackVoteSize    = ~520 bytes  // Uncompressed msgpack
+MaxCompressedVoteSize = 502 bytes   // Stateless compressed (worst case)
+```
+
+**Typical compressed vote size:** ~350-400 bytes
+
+The maximum (502 bytes) assumes all optional fields present and maximum-length varints (9 bytes each). In practice:
+- Varints are 2-4 bytes (not 9)
+- Some optional fields are absent
+- Stateful compression (VP) further reduces size
+
+#### 10.4 Proposal Compression
+
+Proposals use **zstd compression** (not vpack):
+- Tag: `PP` (ProposalPayload)
+- Compression level: `BestSpeed`
+- Typical compression ratio: ~40-50%
+
+### 11. Per-Round Message Summary
+
+| Component | Messages/Round | Wire Bytes Each | KB/Round |
+|-----------|----------------|-----------------|----------|
+| Soft votes | 303 | ~350 | 106 |
+| Cert votes | 144 | ~350 | 50 |
+| Proposals | 3.3 | ~1,200 (zstd) | 4 |
+| Cert bundle | 1 | ~6,000 | 6 |
+| **Total** | **~451** | | **~166** |
+
+*Note: "Wire Bytes" reflects compressed on-the-wire size, not uncompressed payload.*
+
+### 12. Bandwidth Estimate
 
 At mean round duration of 2.78 seconds:
 
 ```
-241 KB / 2.78 sec = 87 KB/sec = ~696 Kbps
+166 KB / 2.78 sec = 60 KB/sec = ~480 Kbps
 ```
 
-**Single-channel consensus bandwidth: ~700 Kbps inbound**
+**Single-channel consensus bandwidth: ~400-500 Kbps inbound**
 
-### 12. Traffic Composition
+This aligns with empirical observation via `iftop` showing ~400 Kbps on a live single-peer connection.
+
+*Previous estimate of ~700 Kbps assumed 500-byte uncompressed votes. The vpack compression reduces this by ~30%.*
+
+### 13. Traffic Composition
 
 | Component | % of Messages | % of Bandwidth |
 |-----------|---------------|----------------|
-| Soft votes | 67% | 63% |
+| Soft votes | 67% | 64% |
 | Cert votes | 32% | 30% |
-| Proposals | 0.7% | 3% |
+| Proposals | 0.7% | 2% |
 | Cert bundle | 0.2% | 4% |
 
 Soft votes dominate both message count and bandwidth.
@@ -473,7 +533,7 @@ Soft votes dominate both message count and bandwidth.
 
 ## Part V: Summary
 
-### 13. Key Findings
+### 14. Key Findings
 
 1. **Soft votes:** Expect ~303 per channel (0.86x theory). 44% arrive "late" due to timing but are real traffic.
 
@@ -483,7 +543,7 @@ Soft votes dominate both message count and bandwidth.
 
 4. **Next votes:** Expect 0 in healthy operation. Liveness mechanism for failure recovery only.
 
-5. **Bandwidth:** ~700 Kbps per channel for consensus traffic.
+5. **Bandwidth:** ~400-500 Kbps per channel for consensus traffic (vpack-compressed).
 
 6. **Threshold termination:** Confirmed precisely—cert weight minimum equals exactly 1,112 across 1,001 rounds.
 
@@ -493,7 +553,7 @@ Soft votes dominate both message count and bandwidth.
    - Cert: 233 → 173 (threshold) → 131 (whale) + 13 overshoot = **144** ✓
    - Soft: 354 → 268 (threshold) → 38 (whale) + 265 overshoot = **303** ✓
 
-### 14. Deviation Summary
+### 15. Deviation Summary
 
 | Message Type | Theory | Observed | Ratio | Primary Cause |
 |--------------|--------|----------|-------|---------------|
@@ -502,11 +562,11 @@ Soft votes dominate both message count and bandwidth.
 | Proposals | 20 | 3.3 | 0.16x | Quorum-based filtering |
 | Next votes | 477 | 0 | 0.00x | Healthy network (liveness unused) |
 
-### 15. Practical Implications
+### 16. Practical Implications
 
 For capacity planning on a single peer connection:
 - Budget **~450 messages/round** (not 607 theoretical)
-- Budget **~700 Kbps** inbound bandwidth
+- Budget **~400-500 Kbps** inbound bandwidth (vpack-compressed)
 - Soft votes are the dominant traffic component (67%)
 - Cert traffic is predictable and consistent
 
